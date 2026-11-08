@@ -734,6 +734,8 @@ class AnalyzerPanel:
         self.dim = T["dim"]
 
         mods = [k for k, _ in MODULES if c["modulos"].get(k, True)]
+        if ch < 60:                 # franja muy baja (junto a la cámara): sin vectorscopio
+            mods = [k for k in mods if k != "stereo"] or mods
         fixed = {"stereo": int(min(ch, max(118, cw * 0.15))), "lufs": 214}
         flex = [k for k in mods if k not in fixed]
         free = cw - sum(fixed[k] for k in mods if k in fixed) - G * (len(mods) - 1)
@@ -878,6 +880,8 @@ class AnalyzerPanel:
                 x1 = xi - tw / 2
             x2 = x1 + tw
             gap = 6 if sh >= 70 else 12                # franjas bajas: menos etiquetas
+            if sh < 40 and f not in (100, 1000, 10000):  # muy baja: solo 100, 1K y 10K
+                continue
             if any(x1 < b + gap and x2 > a - gap for a, b in taken):
                 continue
             taken.append((x1, x2))
@@ -1054,14 +1058,17 @@ class AnalyzerPanel:
     def _build_meters(self, X, Y, w, h):
         T, cv = self.T, self.cv
         self.meters = {}
-        top, bot = Y + max(4, self.hdr - 2), Y + h - 14
+        low = h < 60                    # franja muy baja: barras a todo el alto, sin letras
+        top = Y + (3 if low else max(4, self.hdr - 2))
+        bot = Y + h - (3 if low else 14)
         self.m_geom = (top, bot)
         for i, (k, name) in enumerate((("L", "L"), ("R", "R"), ("M", "M"))):
-            mx = X + w - 52 + i * 16
+            mx = X + w - (40 if low else 52) + i * (12 if low else 16)
             cv.create_rectangle(mx, top, mx + 8, bot, fill=T["pista"], outline="")
             fill = cv.create_rectangle(mx, bot, mx + 8, bot, fill=T["acento"], outline="")
             hold = cv.create_line(mx, bot, mx + 8, bot, fill="#ffffff")
-            cv.create_text(mx + 4, bot + 7, text=name, font=(self.sans, 7), fill=T["dim"])
+            if not low:
+                cv.create_text(mx + 4, bot + 7, text=name, font=(self.sans, 7), fill=T["dim"])
             self.meters[k] = dict(x=mx, fill=fill, hold=hold, v=-90.0, h=-90.0, ht=0.0)
 
     # ---- mensajes ----------------------------------------------------------------
@@ -1136,8 +1143,12 @@ class AnalyzerPanel:
         self.win.after(100 if self.visible else 400, self.loud_loop)
 
     def settled(self):
-        """Todo quieto: silencio y medidores, espectro y stereo ya en reposo."""
-        if time.monotonic() - self.engine.loud_t < 1.5:
+        """Todo quieto: silencio y medidores, espectro y stereo ya en reposo, y la onda vieja
+        ya salió de la pantalla (si no, a pocos fps se vería avanzar a saltos)."""
+        quiet = time.monotonic() - self.engine.loud_t
+        if quiet < 1.5:
+            return False
+        if "wave" in self.rects and quiet < self.rects["wave"][2] / 120.0 + 0.5:
             return False
         if "spec" in self.rects and not getattr(self, "spec_rest", False):
             return False

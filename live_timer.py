@@ -960,6 +960,9 @@ elif SYSTEM == "Darwin":
                         found.append(hit)
                 for nw in reversed(found):            # la de más abajo primero
                     _send_v(nw, _SEL[b"setLevel:"], FLOAT_LEVEL)
+                    # en todos los escritorios y también sobre apps en pantalla completa
+                    # (1 = todos los Spaces, 64 = fuera de ⌘`, 256 = auxiliar de pantalla completa)
+                    _send_v(nw, _SEL[b"setCollectionBehavior:"], 1 | 64 | 256)
                     _send_v(nw, _SEL[b"setHidesOnDeactivate:"], 0)
                     if NO_ACTIVATE[0] is None:
                         NO_ACTIVATE[0] = bool(_send_bp(nw, _SEL[b"respondsToSelector:"],
@@ -970,6 +973,65 @@ elif SYSTEM == "Darwin":
                 return bool(found)
         except Exception:
             return False
+
+    try:
+        for _k in (b"safeAreaInsets", b"auxiliaryTopLeftArea", b"auxiliaryTopRightArea",
+                   b"setCollectionBehavior:"):
+            _SEL[_k] = _objc.sel_registerName(_k)
+    except Exception:
+        _LEVEL_OK = False
+
+    def screen_bands():
+        """Por pantalla (mismo orden que screens()): None, o (alto, izquierda, derecha) de la
+        franja negra que deja la cámara (notch) cuando una app está en pantalla completa.
+        izquierda/derecha = (x, y, ancho, alto) en coordenadas de Tk."""
+        if not _LEVEL_OK:
+            return []
+        out = []
+        try:
+            with _Pool():
+                arr = _send_p(_NSScreen, _SEL[b"screens"])
+                n = _send_u(arr, _SEL[b"count"]) if arr else 0
+                h0 = None
+                for i in range(min(int(n), 8)):
+                    sc = _send_pi(arr, _SEL[b"objectAtIndex:"], i)
+                    f = _rect_fn(sc, _SEL[b"frame"])
+                    if h0 is None:
+                        h0 = f.h
+                    if not _send_bp(sc, _SEL[b"respondsToSelector:"], _SEL[b"safeAreaInsets"]):
+                        out.append(None)
+                        continue
+                    ins = _rect_fn(sc, _SEL[b"safeAreaInsets"])     # top, left, bottom, right
+                    top = ins.x
+                    if top < 20:
+                        out.append(None)
+                        continue
+                    L = _rect_fn(sc, _SEL[b"auxiliaryTopLeftArea"])
+                    R = _rect_fn(sc, _SEL[b"auxiliaryTopRightArea"])
+                    conv = lambda r: (int(r.x), int(round(h0 - r.y - r.h)), int(r.w), int(r.h))
+                    out.append((int(top), conv(L), conv(R)))
+        except Exception:
+            return []
+        return out
+
+    def live_is_fullscreen(pid):
+        """True/False si el DAW está en pantalla completa (Accesibilidad); None si no se sabe."""
+        if not _AX_OK or not pid:
+            return None
+        app = _AX.AXUIElementCreateApplication(int(pid))
+        if not app:
+            return None
+        try:
+            _AX.AXUIElementSetMessagingTimeout(app, 0.3)
+            win = _ax_get(app, "AXMainWindow") or _ax_get(app, "AXFocusedWindow")
+            if not win:
+                return None
+            try:
+                return _ax_value(win, "AXFullScreen")
+            finally:
+                _CF.CFRelease(win)
+        finally:
+            _CF.CFRelease(app)
 
     def activate_self():
         """Para ventanas donde se escribe (Ajustes, nombres): el teclado va al timer."""
@@ -1037,6 +1099,12 @@ else:
 
 if SYSTEM != "Darwin":
     NO_ACTIVATE = [False]
+
+    def screen_bands():
+        return []
+
+    def live_is_fullscreen(pid):
+        return None
 
     def activate_self():
         pass
@@ -1293,6 +1361,7 @@ class GauxTimer:
         self.front = "other"
         self.visible = False
         self.peek = False                 # franja apartada para dejar ver la barra de macOS
+        self.fs_band = None               # DAW en pantalla completa: franja junto a la cámara
         self.ui_busy = False              # Live tiene un diálogo abierto (Exportar, Ajustes…)
         self._menu_t = 0.0                # última vez que se vio un menú de Live abierto
         self.pending_splash = False       # "LET'S GAUUUUX" pendiente al abrir Live
@@ -1399,9 +1468,26 @@ class GauxTimer:
         old = None if first else (self.root.winfo_x(), self.root.winfo_y(), self.W)
         self.layout()
         saved = self.conf.get("pos", {}).get(self.pos_key())
-        if self.top and self.conf.get("top_geom"):
+        fb = getattr(self, "fs_band", None)
+        if self.top and self.conf.get("top_geom") and fb and fb.get("left"):
+            # DAW en pantalla completa: todo va a la franja negra junto a la cámara
+            lx, ly, lw, lh = fb["left"]
+            rx, ry, rw, rh = fb["right"]
+            self.root.update_idletasks()
+            tx, ty = lx + 10, ly + max(0, (lh - self.H) // 2)
+            self._dock_pos = (tx, ty)
+            self._move(tx, ty)
+            self.root.after(80, lambda: self._move(tx, ty))
+            a = self.conf["analizador"]
+            if rw >= 360:
+                a["x"], a["w"] = rx + 10, rw - 20
+            else:
+                a["x"], a["w"] = tx + self.W + 8, max(200, lw - self.W - 28)
+            a["y"], a["h"] = ry + 2, max(24, rh - 4)
+        elif self.top and self.conf.get("top_geom"):
             gx, gy, gw = self.conf["top_geom"]
             self.root.update_idletasks()        # aplicar el tamaño nuevo antes de fijar la posición
+            self._dock_pos = (gx, gy)
             self._move(gx, gy)
             self.root.after(80, lambda: self._move(gx, gy))
             a = self.conf["analizador"]
@@ -1519,9 +1605,34 @@ class GauxTimer:
         b = daw_window_bounds(LIVE_PID[0])
         if not b:
             return
-        for s in lst:                                # DAW en pantalla completa: no se toca
-            if all(abs(b[i] - s[i]) <= 2 for i in range(4)):
-                return
+        scr = self.screen_for(*b)
+        bands = screen_bands()
+        idx = lst.index(scr) if scr in lst else -1
+        band = bands[idx] if 0 <= idx < len(bands) else None
+        inset = band[0] if band else 0
+        covers = (abs(b[0] - scr[0]) <= 2 and abs(b[2] - scr[2]) <= 2
+                  and b[1] <= scr[1] + inset + 2 and b[1] + b[3] >= scr[1] + scr[3] - 2)
+        fs = False
+        if covers:
+            # ¿pantalla completa o solo maximizada? Accesibilidad lo dice (en otro hilo)
+            r = self._bg_take("fs", "nada")
+            if r != "nada":
+                self._fs_ax = r if isinstance(r, bool) else None
+            self._bg("fs", lambda: live_is_fullscreen(LIVE_PID[0]))
+            fs = getattr(self, "_fs_ax", None)
+            if fs is None:
+                fs = True              # sin Accesibilidad no se puede mover el DAW de todos modos
+        else:
+            self._fs_ax = None
+        new_band = None
+        if fs:
+            new_band = {"left": band[1], "right": band[2]} if band else {"overlay": True}
+        if new_band != getattr(self, "fs_band", None):
+            self.fs_band = new_band
+            self._overlap_n = self._move_tries = 0
+            self.apply_conf()
+        if fs:
+            return                     # en pantalla completa el DAW no se mueve
         t = self.dock_target(b)
         if not t:
             return
@@ -1536,21 +1647,56 @@ class GauxTimer:
         bx, by, bw, bh = b
         bottom_ok = scr[5] + scr[7]
         bad = by < gy + th - 4 or by + bh > bottom_ok + 4
-        self._overlap_n = getattr(self, "_overlap_n", 0) + 1 if bad else 0
+        if not bad:
+            self._overlap_n = self._move_tries = 0
+            return
+        self._overlap_n = getattr(self, "_overlap_n", 0) + 1
         now = time.monotonic()
         if self._overlap_n >= (1 if changed else 2) and now - getattr(self, "_live_move_t", 0.0) > 4 \
-                and getattr(self, "_move_fail", 0) < 3:
+                and getattr(self, "_move_tries", 0) < 3:
             self._live_move_t = now
+            self._move_tries = getattr(self, "_move_tries", 0) + 1   # si no se mueve: 3 intentos
             top_y = max(by, gy + th)
             bottom = min(by + bh, bottom_ok)
             if bottom - top_y < 300:
                 bottom = bottom_ok
-            try:
+            nx, nw = max(bx, scr[4]), min(bw, scr[6])
+
+            def move():
                 wid = live_main_window()[0]
-                set_live_window(wid, max(bx, scr[4]), top_y, min(bw, scr[6]), bottom - top_y)
-                self._move_fail = 0
-            except Exception:
-                self._move_fail = getattr(self, "_move_fail", 0) + 1
+                set_live_window(wid, nx, top_y, nw, bottom - top_y)
+            self._bg("move", move)                # osascript en otro hilo: nada se congela
+
+    @property
+    def dock_h(self):
+        """Alto del timer acoplado: el de la franja, o el de la franja de la cámara en
+        pantalla completa."""
+        fb = getattr(self, "fs_band", None)
+        if fb and fb.get("left"):
+            return max(24, fb["left"][3] - 4)
+        return self.top_h
+
+    def _bg(self, name, fn):
+        """Corre fn() en otro hilo (osascript, Accesibilidad): el timer nunca se congela.
+        El resultado queda en self._bg_res[name]."""
+        jobs = self.__dict__.setdefault("_jobs", {})
+        res = self.__dict__.setdefault("_bg_res", {})
+        if jobs.get(name):
+            return False
+        jobs[name] = True
+
+        def run():
+            try:
+                out = fn()
+            except Exception as e:
+                out = e
+            res[name] = out
+            jobs[name] = False
+        threading.Thread(target=run, daemon=True).start()
+        return True
+
+    def _bg_take(self, name, default=None):
+        return self.__dict__.setdefault("_bg_res", {}).pop(name, default)
 
     @property
     def top_h(self):
@@ -1930,7 +2076,7 @@ class GauxTimer:
     def _layout_dock(self):
         """Timer acoplado en la franja Top Live: se reacomoda según su altura."""
         T, cv = self.T, self.cv
-        H = self.top_h
+        H = self.dock_h
         k = H / TOP_H
         m = 6 if k >= 0.8 else 4
         R = max(8, int(16 * k))
@@ -2607,9 +2753,12 @@ class GauxTimer:
                     self.set_visible(False, force=True)
                 elif self.peek:
                     now = time.monotonic()
+                    r = self._bg_take("ax")
+                    if isinstance(r, tuple):
+                        self._ax_state = r
                     if now - getattr(self, "_ax_t", 0.0) >= 0.25:     # ≤ 4 consultas por segundo
                         self._ax_t = now
-                        self._ax_state = live_ui_state(LIVE_PID[0], check_menu=True)
+                        self._bg("ax", lambda: live_ui_state(LIVE_PID[0], check_menu=True))
                     menu, dlg = getattr(self, "_ax_state", (False, False))
                     # respaldo sin Accesibilidad: un clic en la barra de menú abre un menú;
                     # el siguiente clic (elegir una opción o cerrarlo) lo cierra
@@ -2629,7 +2778,8 @@ class GauxTimer:
                         self.peek = False
                         self.set_visible((self.last_front_live or self._settings_open())
                                          and not self.ui_busy)
-                        self.root.after(150, self.reapply_top)  # por si Live cambió de tamaño
+                        if not getattr(self, "fs_band", None):  # por si Live cambió de tamaño
+                            self.root.after(150, lambda: self._bg("reapply", self.reapply_top))
             except tk.TclError:
                 pass
         elif self.peek:
@@ -3027,7 +3177,7 @@ class GauxTimer:
                 self.pending_splash = True
                 self._title_t = 0.0                        # leer el proyecto ya mismo
                 if self.conf.get("top_mode"):
-                    self.root.after(2500, self.reapply_top)
+                    self.root.after(2500, lambda: self._bg("reapply", self.reapply_top))
                 self.session = 0.0
                 self.session_start = dt.datetime.now().isoformat(timespec="seconds")
                 if self.conf["analizador"]["activo"] and self.ensure_analyzer():
@@ -3320,7 +3470,7 @@ class GauxTimer:
 
     def _keep_docked(self):
         """Mantiene la franja en su sitio aunque el sistema mueva alguna ventana."""
-        gx, gy, gw = self.conf["top_geom"]
+        gx, gy = getattr(self, "_dock_pos", None) or self.conf["top_geom"][:2]
         try:
             if (self.root.winfo_x(), self.root.winfo_y()) != (gx, gy):
                 self._move(gx, gy)

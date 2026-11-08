@@ -50,7 +50,7 @@ Se activa con ctrl+clic en el timer → **Top Live Performance**, o en ⚙ → T
 
 **Tamaño de la franja:** de 100 % a 50 % (ctrl+clic → Tamaño de la franja Top Live, o en ⚙). Al achicarla todo se reacomoda para seguir siendo legible: por debajo de ~100 px se ocultan los títulos de los módulos, el timer pasa a una fila y el loudness a una línea. Live se ajusta al instante.
 
-**Pantalla completa (Mac):** macOS no deja mover una ventana en pantalla completa, así que al activar el modo el timer saca a Live de pantalla completa y lo deja ocupando toda la pantalla bajo la franja. Al desactivarlo, Live vuelve a pantalla completa.
+**Pantalla completa (Mac):** al activar el modo, el timer saca a Live de pantalla completa y lo deja ocupando toda la pantalla bajo la franja. Si después pones Live en pantalla completa, el timer y un analizador compacto (onda, espectro y loudness) pasan a la franja negra de arriba, a los lados de la cámara, sin tapar nada de Live. Al salir de pantalla completa vuelven a la franja normal. En pantallas sin cámara (monitor externo) la franja queda encima de Live mientras esté en pantalla completa.
 
 **Barra de menú y botones de ventana:** lleva el mouse al borde superior de la pantalla y la franja se aparta para que macOS muestre la barra de menú y los botones de la ventana (por ejemplo, para salir de pantalla completa). Mientras un menú de Live (Archivo, Edición…) siga abierto, la franja no vuelve; regresa sola cuando eliges una opción o cierras el menú y bajas el mouse.
 
@@ -68,7 +68,8 @@ El timer siempre queda por encima del analizador, también fuera de este modo.
 ## Rendimiento
 Pensado para dejarlo encendido todo el día sin cargar el Mac:
 - ⚙ → Apariencia → **Fluidez**: *120 fps* (todo a 120), *Equilibrado* (predeterminado: onda y medidores a 120 mientras suena; timer, espectro y stereo a 60) o *60 fps* (todo a 60).
-- **Mientras suena** va a la fluidez elegida. **En silencio**, cuando todo terminó de caer, el analizador baja a 15 fps (no se mueve nada, así que no se nota).
+- **Mientras suena** va a la fluidez elegida. **Al parar**, la onda termina de pasar con fluidez y recién cuando todo quedó quieto el analizador baja a 15 fps (no se nota).
+- Mover la ventana de Live o revisar sus menús se hace en segundo plano: el timer nunca se congela esperando a macOS.
 - **Con otra app al frente** (o Live cerrado) el timer y el analizador dejan de dibujar por completo.
 - Las animaciones van según el tiempo real: se ven igual de rápidas a 60 que a 120, solo más suaves.
 - El timer ya no lanza procesos cada pocos segundos para saber si Live está abierto: se lo pregunta directo a macOS.
