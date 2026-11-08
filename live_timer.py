@@ -958,6 +958,15 @@ elif SYSTEM == "Darwin":
                             hit = same[0]
                     if hit is not None:
                         found.append(hit)
+                # respaldo: si alguna ventana no se reconoció por su posición, todas las ventanas
+                # sin borde del timer (timer, analizador) entran igual a la capa y a los Spaces
+                if len(found) < len(geoms):
+                    for nw, f in wins:
+                        if nw in found or not _send_b(nw, _SEL[b"isVisible"]):
+                            continue
+                        if _send_u(nw, _SEL[b"styleMask"]) & 0x1:      # con barra de título
+                            continue
+                        found.append(nw)
                 for nw in reversed(found):            # la de más abajo primero
                     _send_v(nw, _SEL[b"setLevel:"], FLOAT_LEVEL)
                     # en todos los escritorios y también sobre apps en pantalla completa
@@ -976,7 +985,7 @@ elif SYSTEM == "Darwin":
 
     try:
         for _k in (b"safeAreaInsets", b"auxiliaryTopLeftArea", b"auxiliaryTopRightArea",
-                   b"setCollectionBehavior:"):
+                   b"setCollectionBehavior:", b"styleMask"):
             _SEL[_k] = _objc.sel_registerName(_k)
     except Exception:
         _LEVEL_OK = False
