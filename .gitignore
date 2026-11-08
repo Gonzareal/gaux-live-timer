@@ -1,0 +1,8 @@
+build/
+build-*/
+dist/
+JUCE/
+__pycache__/
+*.pyc
+.DS_Store
+*.zip

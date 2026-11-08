@@ -1,0 +1,36 @@
+==============================================================
+  GAUX LIVE TIMER  -  LEE ESTO ANTES DE INSTALAR (Windows)
+==============================================================
+
+Gaux Live Timer cuenta el tiempo que de verdad produces en tu DAW,
+con metas, proyectos y un analizador de audio. Gratis, hecho por
+Aleksander Gaux.
+
+Requisitos: Windows 10 u 11 de 64 bits.
+
+--------------------------------------------------------------
+ VAS A VER UNA ALERTA DE WINDOWS (ES NORMAL)
+--------------------------------------------------------------
+El instalador no tiene una firma paga, así que Windows muestra:
+
+   "Windows protegió su PC"
+
+Pulsa "Más información" > "Ejecutar de todas formas".
+Si el navegador dice que el archivo "no se descarga habitualmente",
+elige "Conservar".
+
+--------------------------------------------------------------
+ PASOS
+--------------------------------------------------------------
+1. Descomprime el zip (clic derecho > "Extraer todo...").
+2. Abre "GauxLiveTimer_..._Windows_Setup.exe" e instala. Incluye la
+   app y el plugin Gaux Link (VST3).
+3. Gaux Live Timer aparece solo cuando tu DAW está al frente. Para
+   ver los Ajustes, haz doble clic sobre el timer o abre la app otra
+   vez desde el menú Inicio.
+4. Analizador: en tu DAW vuelve a escanear los plugins (en Ableton:
+   Opciones > Preferencias > Plug-ins > "Usar carpeta de sistema VST3"
+   > Volver a escanear) y pon "Gaux Link" al final del Master.
+   No modifica tu audio y no necesitas VB-Cable.
+
+Tus datos se guardan solo en tu computador.

@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Gaux Live Timer @VERSION@</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="allow" require-scripts="false" rootVolumeOnly="true" hostArchitectures="arm64"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <os-version min="12.0"/>
+    <choices-outline>
+        <line choice="app"/>
+        <line choice="vst3"/>
+        <line choice="au"/>
+    </choices-outline>
+    <choice id="app" title="Gaux Live Timer" description="La app: timer, metas, proyectos y analizador." enabled="false" selected="true">
+        <pkg-ref id="com.aleksandergaux.livetimer.app"/>
+    </choice>
+    <choice id="vst3" title="Gaux Link (VST3)" description="Plugin que envía el audio de tu DAW al analizador, sin BlackHole. Para Ableton Live, FL Studio, Cubase, Studio One, Reaper, Bitwig...">
+        <pkg-ref id="com.aleksandergaux.link.vst3"/>
+    </choice>
+    <choice id="au" title="Gaux Link (Audio Unit)" description="El mismo plugin en formato AU, para Logic Pro, GarageBand y Ableton Live.">
+        <pkg-ref id="com.aleksandergaux.link.au"/>
+    </choice>
+    <pkg-ref id="com.aleksandergaux.livetimer.app" version="@VERSION@" onConclusion="none">app.pkg</pkg-ref>
+    <pkg-ref id="com.aleksandergaux.link.vst3" version="@VERSION@" onConclusion="none">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.aleksandergaux.link.au" version="@VERSION@" onConclusion="none">au.pkg</pkg-ref>
+</installer-gui-script>

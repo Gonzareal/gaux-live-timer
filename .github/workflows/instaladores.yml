@@ -1,0 +1,202 @@
+# Gaux Live Timer - arma la app y el plugin Gaux Link y crea los instaladores de Mac y Windows.
+# Corre solo cuando cambia el código (rama main), a mano (Actions > Instaladores > "Run workflow")
+# o al crear una etiqueta vX.Y (entonces además publica una Release con los dos zip).
+name: Instaladores
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['README.md', 'LEEME.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: instaladores-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    name: Mac (Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python oficial de python.org (trae Tk 8.6, el que necesita el timer)
+      - name: Python de python.org
+        run: |
+          curl -fsSL -o py.pkg https://www.python.org/ftp/python/3.12.8/python-3.12.8-macos11.pkg
+          sudo installer -pkg py.pkg -target /
+          PY=/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12
+          $PY -c "import tkinter, sys; print(sys.version, 'Tk', tkinter.TkVersion)"
+          $PY -m pip install --quiet --upgrade pip
+          $PY -m pip install --quiet "pyinstaller>=6.11" numpy sounddevice
+          echo "PYTHON=$PY" >> "$GITHUB_ENV"
+
+      - name: Revisar el código de la app
+        run: $PYTHON -m py_compile live_timer.py gaux_analizador.py
+
+      - name: Armar la app, el plugin y el instalador
+        run: |
+          set -o pipefail
+          bash package_mac.sh 2>&1 | tee build.log
+
+      - name: Mostrar los errores
+        if: failure()
+        run: |
+          msg=$( (grep -E "error:|Error|ERROR|FAILED|Traceback" build.log | head -20; echo "----- final -----"; tail -n 30 build.log) | cut -c1-400 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Errores de Mac::$msg"
+
+      - name: Instalar el .pkg (como lo haría un usuario)
+        run: |
+          sudo installer -pkg "$(ls dist/*/Gaux\ Live\ Timer.pkg)" -target /
+          ls -la "/Applications/Gaux Live Timer.app/Contents/MacOS" "/Library/Audio/Plug-Ins/VST3/" "/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          sleep 3
+          auval -v aufx Gxlk Gaux
+
+      - name: Abrir la app instalada (prueba de humo)
+        run: |
+          "/Applications/Gaux Live Timer.app/Contents/MacOS/Gaux Live Timer" --demo &
+          PID=$!
+          sleep 12
+          kill -0 $PID || { echo "::error title=La app se cerró sola::"; cat ~/.live_timer/registro.txt; exit 1; }
+          kill $PID || true
+          cat ~/.live_timer/registro.txt
+          if grep -q "Traceback" ~/.live_timer/registro.txt; then echo "::error title=Errores en la app::revisa el registro"; exit 1; fi
+
+      - name: Validar el plugin con pluginval (VST3 y AU)
+        timeout-minutes: 20
+        run: |
+          curl -fsSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          bash .github/scripts/pluginval_mac.sh "/Library/Audio/Plug-Ins/VST3/Gaux Link.vst3" vst3 --strictness-level 7 --skip-gui-tests --timeout-ms 300000
+          bash .github/scripts/pluginval_mac.sh "/Library/Audio/Plug-Ins/Components/Gaux Link.component" au --strictness-level 7 --skip-gui-tests --timeout-ms 300000
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GauxLiveTimer-Mac
+          path: dist/*.zip
+          if-no-files-found: error
+
+      # El último instalador validado queda en la rama "instalador-mac" (un solo commit):
+      # así tu web puede enlazarlo directo.
+      - name: Publicar en la rama instalador-mac
+        if: github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir pub && cp dist/*.zip pub/GauxLiveTimer_Mac.zip
+          echo "$GITHUB_SHA" > pub/COMMIT.txt
+          date -u '+%Y-%m-%d %H:%M UTC' > pub/FECHA.txt
+          cd pub
+          git init -q && git checkout -q -b instalador-mac
+          git add . && git -c user.name="Gaux CI" -c user.email="ci@gaux.local" commit -qm "Instalador Mac ${GITHUB_SHA::7}"
+          git push -fq "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" instalador-mac
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Herramientas
+        shell: pwsh
+        run: |
+          python -c "import tkinter, sys; print(sys.version, 'Tk', tkinter.TkVersion)"
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet "pyinstaller>=6.11" numpy sounddevice psutil
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+
+      - name: Armar la app, el plugin y el instalador
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File package_windows.ps1 *>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE) { exit 1 }
+
+      - name: Mostrar los errores
+        if: failure()
+        shell: pwsh
+        run: |
+          $e = Select-String -Path build.log -Pattern ' error |error C|fatal error|Fallo|No se genero|Traceback' | Select-Object -First 25 | ForEach-Object { $_.Line.Trim() }
+          Write-Output ("::error title=Errores de Windows::" + ($e -join '%0A'))
+
+      - name: Instalar (como lo haría un usuario, en silencio)
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem -Recurse -Filter *_Windows_Setup.exe dist | Select-Object -First 1).FullName
+          Start-Process -Wait -FilePath $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-'
+          if (-not (Test-Path "$env:ProgramFiles\Gaux\Gaux Live Timer\Gaux Live Timer.exe")) { throw 'No quedó la app' }
+          if (-not (Test-Path "$env:CommonProgramFiles\VST3\Gaux Link.vst3")) { throw 'No quedó el VST3' }
+
+      - name: Abrir la app instalada (prueba de humo)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "$env:ProgramFiles\Gaux\Gaux Live Timer\Gaux Live Timer.exe" -ArgumentList '--demo' -PassThru
+          Start-Sleep -Seconds 12
+          $log = "$env:USERPROFILE\.live_timer\registro.txt"
+          if (Test-Path $log) { Get-Content $log }
+          if ($p.HasExited) { Write-Output "::error title=La app se cerró sola::"; exit 1 }
+          Stop-Process -Id $p.Id -Force
+          if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Traceback' -Quiet)) { Write-Output "::error title=Errores en la app::"; exit 1 }
+
+      - name: Validar el plugin con pluginval (VST3)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -UseBasicParsing -Uri https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pv
+          $pv = (Get-ChildItem -Recurse -Filter pluginval.exe pv | Select-Object -First 1).FullName
+          $args = @('--strictness-level','7','--skip-gui-tests','--validate', "`"$env:CommonProgramFiles\VST3\Gaux Link.vst3`"")
+          $p = Start-Process -FilePath $pv -ArgumentList $args -Wait -PassThru -NoNewWindow -RedirectStandardOutput pv.log -RedirectStandardError pv_err.log
+          Get-Content pv.log -Tail 10
+          if ($p.ExitCode -ne 0 -or -not (Select-String -Path pv.log -Pattern 'SUCCESS' -Quiet)) { Write-Output "::error title=pluginval Windows::revisa el registro"; exit 1 }
+
+      - name: Desinstalar (que no deje restos)
+        shell: pwsh
+        run: |
+          $u = Get-ChildItem "$env:ProgramFiles\Gaux\Gaux Live Timer\unins*.exe" | Select-Object -First 1
+          Start-Process -Wait -FilePath $u.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          Start-Sleep -Seconds 3
+          if (Test-Path "$env:CommonProgramFiles\VST3\Gaux Link.vst3") { throw 'Quedó el VST3' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GauxLiveTimer-Windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+      - name: Publicar en la rama instalador-windows
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir pub && cp dist/*.zip pub/GauxLiveTimer_Windows.zip
+          echo "$GITHUB_SHA" > pub/COMMIT.txt
+          date -u '+%Y-%m-%d %H:%M UTC' > pub/FECHA.txt
+          cd pub
+          git init -q && git checkout -q -b instalador-windows
+          git add . && git -c user.name="Gaux CI" -c user.email="ci@gaux.local" commit -qm "Instalador Windows ${GITHUB_SHA::7}"
+          git push -fq "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" instalador-windows
+
+  release:
+    name: Publicar versión
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/**/*.zip
+          generate_release_notes: true

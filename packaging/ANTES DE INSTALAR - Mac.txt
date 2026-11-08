@@ -1,0 +1,42 @@
+==============================================================
+  GAUX LIVE TIMER  -  LEE ESTO ANTES DE INSTALAR (Mac)
+==============================================================
+
+Gaux Live Timer cuenta el tiempo que de verdad produces en tu DAW,
+con metas, proyectos y un analizador de audio. Gratis, hecho por
+Aleksander Gaux.
+
+Requisitos: Mac con Apple Silicon (M1 o más nuevo) y macOS 12 o
+más reciente.
+
+--------------------------------------------------------------
+ VAS A VER UN AVISO DE macOS (ES NORMAL)
+--------------------------------------------------------------
+El instalador no está firmado con una cuenta paga de Apple, así
+que la primera vez macOS no lo deja abrir:
+
+  1. Haz doble clic en "Gaux Live Timer.pkg" y cierra el aviso.
+  2. Ve a Ajustes del Sistema > Privacidad y seguridad.
+  3. Abajo dice que se bloqueó "Gaux Live Timer.pkg": pulsa
+     "Abrir igualmente" y escribe tu contraseña.
+
+--------------------------------------------------------------
+ PASOS
+--------------------------------------------------------------
+1. Instala "Gaux Live Timer.pkg" (incluye la app y el plugin
+   Gaux Link en VST3 y AU).
+2. Abre Gaux Live Timer desde Aplicaciones. Aparece solo cuando
+   tu DAW está al frente. Para ver los Ajustes, haz doble clic
+   sobre el timer o abre la app otra vez.
+3. Analizador: en tu DAW vuelve a escanear los plugins y pon
+   "Gaux Link" al final del Master. No modifica tu audio y no
+   necesitas BlackHole.
+
+Permisos que macOS te puede pedir (todos para "Gaux Live Timer"):
+  - Accesibilidad y "controlar System Events": solo para el modo
+    Top Live (mover la ventana de tu DAW).
+  - Grabación de pantalla (opcional): para leer el nombre de tu
+    proyecto desde el título de la ventana.
+  - Micrófono: solo si usas BlackHole en vez de Gaux Link.
+
+Tus datos se guardan solo en tu computador.

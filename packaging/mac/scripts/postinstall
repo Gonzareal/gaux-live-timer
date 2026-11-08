@@ -1,0 +1,9 @@
+#!/bin/bash
+# Después de instalar: quitar marcas de cuarentena y refrescar la caché de Audio Units
+for p in "/Library/Audio/Plug-Ins/VST3/Gaux Link.vst3" \
+         "/Library/Audio/Plug-Ins/Components/Gaux Link.component" \
+         "/Applications/Gaux Live Timer.app"; do
+    [ -e "$p" ] && xattr -dr com.apple.quarantine "$p" 2>/dev/null
+done
+killall -9 AudioComponentRegistrar >/dev/null 2>&1
+exit 0
