@@ -1816,6 +1816,7 @@ class GauxTimer:
         self.chip_label, self.chip_items = None, []
         self.title_it = self.status_it = self.auto_it = None
         self.proj_it = None
+        self.brk_items = None               # aviso de descanso sobre el reloj
         self.status_font = None
         self.chip_y = None
         if not hasattr(self, "_font_cache"):
@@ -2541,6 +2542,53 @@ class GauxTimer:
             self.cv.coords(item, *c)
             self._ccache[item] = c
 
+    def _break_flash(self, on):
+        """Cuando toca descansar, el reloj se alterna con un cartel BREAK bien visible,
+        en todas las vistas (también mini, compacta y Top Live). Sin notificaciones."""
+        cv, T = self.cv, self.T
+        show = on and (time.monotonic() % 4.0) < 1.6
+        if not show:
+            if self.brk_items:
+                for it in self.brk_items:
+                    cv.itemconfig(it, state="hidden")
+                for d in self.digits:
+                    if d.get("_hid"):
+                        d["_hid"] = False
+                        cv.itemconfig(d["main"], state="normal")
+                        for it, _, _ in d["glows"]:
+                            cv.itemconfig(it, state="normal")
+            return
+        if not self.brk_items:
+            boxes = [cv.bbox(d["main"]) for d in self.digits]
+            boxes = [b for b in boxes if b]
+            if not boxes:
+                return
+            x1, y1 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+            x2, y2 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+            w, h = x2 - x1, y2 - y1
+            word = ("RECHARGE" if self.brand else "BREAK") if w > h * 1.2 else "BRK"
+            if w < h * 0.8:                      # columna vertical: letras apiladas
+                word = "\n".join("BREAK")
+            fill = T["acento"] if self.brand else self.T.get("alerta", ALERT)
+            r = min(8, h / 4)
+            bg = rrect(cv, x1 - 4, y1 + 1, x2 + 4, y2 - 1, r, outline="", fill=fill)
+            size = int(max(7, min(h * 0.55, w / max(1, len(word.split("\n")[0])) * 1.25)))
+            if "\n" in word:
+                size = int(max(7, min(w * 0.75, h / 6.5)))
+            fam = self.f_label[0] if self.brand else self.f_sans
+            tx = cv.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=word, justify="center",
+                                font=(fam, -size, "bold"), fill="#FFFFFF")
+            self.brk_items = [bg, tx]
+        for it in self.brk_items:
+            cv.itemconfig(it, state="normal")
+            cv.tag_raise(it)
+        for d in self.digits:
+            if not d.get("_hid"):
+                d["_hid"] = True
+                cv.itemconfig(d["main"], state="hidden")
+                for it, _, _ in d["glows"]:
+                    cv.itemconfig(it, state="hidden")
+
     def render_frame(self, force=False):
         T, cv = self.T, self.cv
         anim = self.conf["animaciones"]
@@ -2603,8 +2651,10 @@ class GauxTimer:
             if self.title_it:
                 self._ic(self.title_it, fill=mix(T["acento"], T["acento2"], slow))
 
-        # dígitos con rebote y resplandor
-        if self.counting:
+        # dígitos con rebote y resplandor (ámbar al acercarse el descanso)
+        if self.counting and lvl == 1:
+            main, glow = WARN, mix(WARN, T["bg"], 0.55 - 0.2 * s)
+        elif self.counting:
             main = mix(T["texto"], self.T.get("alerta", ALERT), 0.4 * fast) if lvl == 2 else T["texto"]
             glow = mix(self.T.get("alerta", ALERT) if lvl == 2 else T["acento"], T["bg"], 0.5 - 0.2 * s)
         else:
@@ -2622,6 +2672,9 @@ class GauxTimer:
                 self._co(d["main"], d["x"], d["y"] + d["off"])
                 for it, dx, dy in d["glows"]:
                     self._co(it, d["x"] + dx, d["y"] + dy + d["off"])
+
+        if style:
+            self._break_flash(lvl == 2 and self.counting)
 
         # barras de metas
         for b in self.bars:
@@ -3972,10 +4025,10 @@ class Proyectos(tk.Toplevel):
         sb.pack(side="right", fill="y")
         self.rows = tk.Frame(self.canvas, bg=T["bg"])
         self.canvas.create_window(0, 0, window=self.rows, anchor="nw")
-        self.rows.bind("<Configure>",
-                       lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<MouseWheel>",
-                         lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+        self.rows.bind("<Configure>", lambda e: self._fit_scroll())
+        self.canvas.bind("<Configure>", lambda e: self._fit_scroll())
+        self.canvas.bind("<MouseWheel>", self._wheel)
+        self.rows.bind("<MouseWheel>", self._wheel)
 
         f = tk.Frame(self, bg=T["bg"])
         f.pack(fill="x", padx=18, pady=(4, 12))
@@ -3989,6 +4042,18 @@ class Proyectos(tk.Toplevel):
         self.geometry(f"+{max(0, (sw - self.winfo_reqwidth()) // 2)}+"
                       f"{max(30, (sh - self.winfo_reqheight()) // 3)}")
         self._tick()
+
+    def _fit_scroll(self):
+        """La lista siempre empieza arriba: si cabe entera, no se desplaza."""
+        c = self.canvas
+        h = max(self.rows.winfo_reqheight(), c.winfo_height())
+        c.configure(scrollregion=(0, 0, self.rows.winfo_reqwidth(), h))
+        if self.rows.winfo_reqheight() <= c.winfo_height():
+            c.yview_moveto(0)
+
+    def _wheel(self, e):
+        if self.rows.winfo_reqheight() > self.canvas.winfo_height():
+            self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")
 
     def cell(self, parent, text, w, anchor, font, fg, bg):
         """Celda de ancho fijo en píxeles (encabezado y filas quedan alineados)."""
@@ -4083,13 +4148,32 @@ class Proyectos(tk.Toplevel):
             self._row_labels[k] = labels
             acts = tk.Frame(row, bg=bg)
             acts.pack(side="left", padx=(8, 0))
-            for text, cmd in (("Usar", lambda n=k: self.use(n)),
-                              ("Renombrar", lambda n=k: self.rename(n)),
-                              ("Eliminar", lambda n=k: self.delete(n))):
-                b = tk.Label(acts, text=text, font=(self.sans, 9), padx=6, pady=1,
-                             cursor="hand2", bg=T["pista"], fg=T["texto"])
-                b.bind("<Button-1>", lambda e, c=cmd: c())
-                b.pack(side="left", padx=2)
+            self._actions(acts, k, bg)
+        self.after_idle(self._fit_scroll)
+
+    def _actions(self, acts, k, bg, confirm=False):
+        """Botones de la fila. Eliminar pide confirmación ahí mismo (sin ventanas aparte,
+        que en macOS quedaban escondidas detrás de esta)."""
+        T = self.T
+        for w in acts.winfo_children():
+            w.destroy()
+        if confirm:
+            v = self.app.project_values(k)
+            tk.Label(acts, text=f"¿Eliminar {fmt_short(v['total'])}?", font=(self.sans, 9, "bold"),
+                     fg=T["texto"], bg=bg).pack(side="left", padx=(2, 6))
+            opts = (("Sí, eliminar", lambda: self.delete(k), True),
+                    ("No", lambda: self._actions(acts, k, bg), False))
+        else:
+            opts = (("Usar", lambda: self.use(k), False),
+                    ("Renombrar", lambda: self.rename(k), False),
+                    ("Eliminar", lambda: self._actions(acts, k, bg, confirm=True), False))
+        for text, cmd, danger in opts:
+            b = tk.Label(acts, text=text, font=(self.sans, 9, "bold" if danger else "normal"),
+                         padx=6, pady=1, cursor="hand2",
+                         bg=T["acento"] if danger else T["pista"],
+                         fg="#FFFFFF" if danger else T["texto"])
+            b.bind("<Button-1>", lambda e, c=cmd: c())
+            b.pack(side="left", padx=2)
 
     def _cells(self, k, v):
         name = k if len(k) <= 30 else k[:29] + "…"
@@ -4110,14 +4194,9 @@ class Proyectos(tk.Toplevel):
                           "(si ya existe, se unen sus horas)", initial=name, on_ok=done)
 
     def delete(self, name):
-        from tkinter import messagebox
-        v = self.app.project_values(name)
-        if messagebox.askyesno("Eliminar proyecto",
-                               f"¿Eliminar “{name}” y sus {fmt_short(v['total'])} registradas?\n"
-                               "Esto no se puede deshacer.", parent=self):
-            self.app.delete_project(name)
-            self._last_keys = None
-            self.refresh()
+        self.app.delete_project(name)
+        self._last_keys = None
+        self.refresh()
 
     def export(self):
         import csv
