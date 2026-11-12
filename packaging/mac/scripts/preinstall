@@ -1,0 +1,13 @@
+#!/bin/bash
+# Antes de instalar: cerrar el timer si está abierto (guarda sus horas y sale).
+# Reemplazar la app mientras corre deja a la versión vieja leyendo archivos nuevos.
+pgrep -f "Gaux Live Timer.app/Contents/MacOS" >/dev/null 2>&1 || exit 0
+touch /tmp/.gaux_timer_reabrir
+printf 'QUIT' | /usr/bin/nc -w 1 127.0.0.1 47653 >/dev/null 2>&1
+for i in $(seq 1 30); do
+    pgrep -f "Gaux Live Timer.app/Contents/MacOS" >/dev/null 2>&1 || exit 0
+    sleep 0.2
+done
+pkill -f "Gaux Live Timer.app/Contents/MacOS" 2>/dev/null
+sleep 0.5
+exit 0

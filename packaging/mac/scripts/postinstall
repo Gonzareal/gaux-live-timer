@@ -6,4 +6,13 @@ for p in "/Library/Audio/Plug-Ins/VST3/Gaux Link.vst3" \
     [ -e "$p" ] && xattr -dr com.apple.quarantine "$p" 2>/dev/null
 done
 killall -9 AudioComponentRegistrar >/dev/null 2>&1
+# Si el timer estaba abierto antes de actualizar, se vuelve a abrir solo
+if [ -f /tmp/.gaux_timer_reabrir ]; then
+    rm -f /tmp/.gaux_timer_reabrir
+    u=$(stat -f %Su /dev/console 2>/dev/null)
+    if [ -n "$u" ] && [ "$u" != "root" ] && [ -d "/Applications/Gaux Live Timer.app" ]; then
+        uid=$(id -u "$u")
+        launchctl asuser "$uid" sudo -u "$u" open "/Applications/Gaux Live Timer.app" >/dev/null 2>&1 &
+    fi
+fi
 exit 0
