@@ -205,7 +205,7 @@ PERSONAL_COLORS = ["#3B82F6", "#22C55E", "#F59E0B", "#EF4444", "#EC4899", "#A855
 def build_personal_theme(pc):
     """Tema del Modo Personal a partir del color que elija el usuario."""
     c = pc.get("color") or "#3B82F6"
-    if not re.match(r"^#[0-9a-fA-F]{6}$", c):
+    if not isinstance(c, str) or not re.match(r"^#[0-9a-fA-F]{6}$", c):
         c = "#3B82F6"
     return dict(nombre="Personal", personal=True, bg="#0A0A0E", bg2=mix(c, "#000000", .72),
                 borde=c, acento=mix(c, "#000000", .1), acento2=mix(c, "#FFFFFF", .22),
@@ -1129,28 +1129,47 @@ if SYSTEM not in ("Darwin", "Windows"):
 LIVE_PID = [None]
 SIN_PROYECTO = "Sin asignar"
 _UNTITLED = re.compile(r"^(untitled|sin t[ií]tulo|new project|nuevo proyecto|sans titre|"
-                       r"unbenannt|senza titolo)\b", re.I)
+                       r"unbenannt|senza titolo|unsaved project|proyecto sin guardar)"
+                       r"(\s*[-_]?\s*\d+)?$", re.I)
 _TITLE_JUNK = re.compile(
     r"^(ableton live.*|live|fl studio.*|logic pro.*|tracks|mixer|edit|mix|pro tools.*|"
     r"cubase.*|nuendo.*|studio one.*|bitwig.*|reaper.*|reason.*|garageband|cakewalk.*|"
-    r"ardour.*|renoise.*|digital performer.*)$", re.I)
+    r"ardour.*|renoise.*|digital performer.*|editor|console|track|arrange|arranger|score|"
+    r"playlist|piano roll|registered to.*|unregistered.*|evaluation license.*)$", re.I)
 _PROJECT_EXT = re.compile(r"\.(als|flp|logicx|logic|ptx|ptf|cpr|npr|song|bwproject|rpp|"
                           r"rpp-bak|reason|band|cwp|ardour|xrns|dpdoc)$", re.I)
+_VIEW_PREFIX = re.compile(r"^(edit|mix|score|midi editor|editor)\s*:\s*", re.I)  # Pro Tools
+_STRIP = " *•·-–—|:"
+
+
+def _clean_project(name):
+    name = _PROJECT_EXT.sub("", (name or "").strip(_STRIP)).strip(_STRIP)
+    if not name or _UNTITLED.match(name) or _TITLE_JUNK.match(name):
+        return None
+    return name[:60].strip()
 
 
 def project_from_title(title):
-    """Nombre del proyecto a partir del título de la ventana del DAW (o None)."""
-    t = re.sub(r"\[[^\]]*\]", "", (title or "")).strip()
+    """Nombre del proyecto a partir del título de la ventana del DAW (o None).
+    Formatos: Live «Nombre [Carpeta] - Ableton Live 12», Cakewalk «Cakewalk - [Nombre - Track]»,
+    Pro Tools «Edit: Nombre», REAPER «Nombre - REAPER v7 - Registered to…», etc."""
+    t = _VIEW_PREFIX.sub("", (title or "").strip())
     if not t:
         return None
-    parts = [x.strip(" *•·") for x in re.split(r"\s+[-–—|]\s+", t)]
+    m = re.search(r"\[([^\]]*)\]", t)
+    if m:
+        before = t[:m.start()].strip(_STRIP)
+        if before and not _TITLE_JUNK.match(before):
+            return _clean_project(before)           # Live: todo lo que va antes de [Carpeta]
+        inside = [x for x in re.split(r"\s+[-–—|]\s+", m.group(1)) if x.strip(_STRIP)]
+        if inside:                                   # Cakewalk / REAPER: el nombre va adentro
+            return _clean_project(inside[0])
+        t = (t[:m.start()] + " " + t[m.end():]).strip()
+    parts = [x.strip(_STRIP) for x in re.split(r"\s+[-–—|]\s+", t)]
     parts = [x for x in parts if x and not _TITLE_JUNK.match(x)]
     if not parts:
         return None
-    name = _PROJECT_EXT.sub("", parts[0]).strip(" *•·")
-    if not name or _UNTITLED.match(name):
-        return None
-    return name[:60]
+    return _clean_project(parts[0])
 
 
 def live_running():
@@ -1276,11 +1295,23 @@ def set_live_window(wid, x, y, w, h):
 # Persistencia y formato
 # --------------------------------------------------------------------------
 def load_json(path):
+    """Lee un JSON. Si está dañado, lo guarda aparte (no se pierden tus horas) y empieza vacío."""
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            out = json.load(f)
+        if isinstance(out, dict):
+            return out
+    except FileNotFoundError:
         return {}
+    except Exception:
+        pass
+    try:
+        if os.path.getsize(path) > 0:
+            stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+            os.replace(path, f"{path}.dañado-{stamp}")
+    except OSError:
+        pass
+    return {}
 
 
 def save_json(path, data):
@@ -1298,6 +1329,109 @@ def deep_merge(base, over):
             out[k] = deep_merge(out[k], v)
         else:
             out[k] = v
+    return out
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _fix_types(val, default):
+    """Deja cada ajuste con el tipo que espera el timer (un archivo editado a mano o de
+    una versión vieja no debe impedir que abra). Las claves extra se conservan."""
+    if isinstance(default, dict):
+        if not isinstance(val, dict):
+            return copy.deepcopy(default)
+        out = dict(val)
+        for k, d in default.items():
+            out[k] = _fix_types(val.get(k, d), d) if k in val else copy.deepcopy(d)
+        return out
+    if isinstance(default, bool):
+        return val if isinstance(val, bool) else default
+    if _num(default):
+        return val if _num(val) else default
+    if isinstance(default, str):
+        return val if isinstance(val, str) else default
+    return val
+
+
+_ENUMS = {"vista": ("completa", "compacta", "mini"), "vista_previa": ("completa", "compacta"),
+          "orientacion": ("horizontal", "vertical"), "modo": ("normal", "autonomo")}
+_RANGES = {("opacidad",): (0.3, 1.0), ("limite_inactividad",): (30, 24 * 3600),
+           ("top_escala",): (50, 100), ("autonomo", "trabajo_min"): (1, 600),
+           ("autonomo", "break_min"): (1, 240), ("autonomo", "max_diario_h"): (0, 24),
+           ("analizador", "w"): (200, 8000), ("analizador", "h"): (24, 2000)}
+
+
+def sanitize_conf(c):
+    c = _fix_types(c, DEFAULT_CONF)
+    for k, opts in _ENUMS.items():
+        if c.get(k) not in opts:
+            c[k] = DEFAULT_CONF[k]
+    if c.get("tema") not in TEMAS:
+        c["tema"] = DEFAULT_CONF["tema"]
+    for path, (lo, hi) in _RANGES.items():
+        d = c
+        for k in path[:-1]:
+            d = d[k]
+        d[path[-1]] = max(lo, min(hi, d[path[-1]]))
+    for k in ("x", "y"):
+        if c.get(k) is not None and not _num(c[k]):
+            c[k] = None
+    a = c["analizador"]
+    for k in ("x", "y"):
+        if a.get(k) is not None and not _num(a[k]):
+            a[k] = None
+    c["pos"] = {k: [int(v[0]), int(v[1])] for k, v in c["pos"].items()
+                if isinstance(v, (list, tuple)) and len(v) == 2 and all(_num(x) for x in v)}
+    for k in ("diaria", "semanal", "mensual"):
+        c["metas"][k]["segundos"] = max(60, c["metas"][k]["segundos"])
+    for k in ("fuente_titulo", "fuente_reloj"):
+        if not isinstance(c.get(k), str):
+            c[k] = None
+    if c.get("daws") is not None:
+        c["daws"] = [k for k in c["daws"] if isinstance(k, str)] \
+            if isinstance(c["daws"], list) else None
+    g = c.get("top_geom")
+    if not (isinstance(g, list) and len(g) == 3 and all(_num(x) for x in g)):
+        c["top_geom"] = None
+        c["top_mode"] = False
+    if not isinstance(c.get("top_prev"), (dict, type(None))):
+        c["top_prev"] = None
+    if not isinstance(c.get("top_mode"), bool):
+        c["top_mode"] = False
+    return c
+
+
+def sanitize_data(d):
+    """Datos (horas, sesiones y proyectos) con la forma correcta; lo inválido se descarta."""
+    if not isinstance(d, dict):
+        d = {}
+    out = dict(d)
+    dias = d.get("dias")
+    out["dias"] = {k: float(v) for k, v in dias.items() if isinstance(k, str) and _num(v)} \
+        if isinstance(dias, dict) else {}
+    ses = d.get("sesiones")
+    out["sesiones"] = [x for x in ses if isinstance(x, dict)] if isinstance(ses, list) else []
+    recs = d.get("proyectos")
+    clean = {}
+    for name, r in (recs.items() if isinstance(recs, dict) else []):
+        if not isinstance(name, str) or not name.strip():
+            continue
+        r = r if isinstance(r, dict) else {}
+        rd = r.get("dias")
+        clean[name] = dict(r, segundos=float(r["segundos"]) if _num(r.get("segundos")) else 0.0,
+                           dias={k: float(v) for k, v in rd.items() if _num(v)}
+                           if isinstance(rd, dict) else {},
+                           sesiones=int(r["sesiones"]) if _num(r.get("sesiones")) else 0,
+                           creado=r.get("creado") if isinstance(r.get("creado"), str) else None,
+                           ultima=r.get("ultima") if isinstance(r.get("ultima"), str) else None,
+                           daw=r.get("daw") if isinstance(r.get("daw"), str) else "")
+    out["proyectos"] = clean
+    al = d.get("alias")
+    if "alias" in d:
+        out["alias"] = {k: v for k, v in al.items() if isinstance(k, str) and isinstance(v, str)} \
+            if isinstance(al, dict) else {}
     return out
 
 
@@ -1336,9 +1470,8 @@ class GauxTimer:
     MARGIN = 6
 
     def __init__(self):
-        self.conf = deep_merge(DEFAULT_CONF, load_json(CONF_FILE))
-        self.data = deep_merge({"dias": {}, "sesiones": [], "proyectos": {}},
-                               load_json(DATA_FILE))
+        self.conf = sanitize_conf(deep_merge(DEFAULT_CONF, load_json(CONF_FILE)))
+        self.data = sanitize_data(load_json(DATA_FILE))
         self.detected = None              # proyecto detectado en el título del DAW
         self.title_seen = None            # None = sin dato; False = macOS no deja leerlo
         self.session_proj = {}            # segundos por proyecto en la sesión actual
@@ -1483,7 +1616,7 @@ class GauxTimer:
             lx, ly, lw, lh = fb["left"]
             rx, ry, rw, rh = fb["right"]
             self.root.update_idletasks()
-            tx, ty = lx + 10, ly + max(0, (lh - self.H) // 2)
+            tx, ty = lx + max(0, min(10, lw - self.W)), ly + max(0, (lh - self.H) // 2)
             self._dock_pos = (tx, ty)
             self._move(tx, ty)
             self.root.after(80, lambda: self._move(tx, ty))
@@ -1795,7 +1928,9 @@ class GauxTimer:
             self.title_text = BRAND_NAME
             self.f_display = self.pick([bf, bt], text=self.splash_text + self.card_head)
         else:
-            title = (pc.get("nombre") or APP_NAME) if self.personal else APP_NAME
+            title = (pc.get("nombre") or APP_NAME).strip() if self.personal else APP_NAME
+            if len(title) > 24:                 # un nombre muy largo no agranda el widget
+                title = title[:23].rstrip() + "…"
             tf = self.pick(TITLE_FONTS, self.conf.get("fuente_titulo"), text=title)
             cf = self.pick(CLOCK_FONTS, self.conf.get("fuente_reloj"))
             self.f_title = (tf, TITLE_SIZES.get(tf, 14),
@@ -1946,12 +2081,19 @@ class GauxTimer:
             return
         now = time.monotonic()
         if now - self._last_rs < 0.03:             # no rehacer más de ~30 veces por segundo
+            self._rs_pending = k                   # se aplica al soltar
             return
         self._last_rs = now
+        self._rs_pending = None
         self.conf.setdefault("escala", {})[key] = k
         self.relayout()
 
     def resize_end(self):
+        k = getattr(self, "_rs_pending", None)
+        self._rs_pending = None
+        if k is not None and self._resize:         # el último movimiento rápido no se pierde
+            self.conf.setdefault("escala", {})[self.pos_key()] = k
+            self.relayout()
         self._resize = None
         x, y = self.root.winfo_x(), self.root.winfo_y()
         self.conf.setdefault("pos", {})[self.pos_key()] = [x, y]
@@ -2026,14 +2168,30 @@ class GauxTimer:
         self.splash = cv.create_text(W / 2, H / 2, text=text, justify="center",
                                      font=(self.f_display, size, "bold"),
                                      fill=T["acento2"], state="hidden")
-        lines = cv.itemcget(self.splash, "text").split("\n")
-        while size > 9:                                  # que quepa en cualquier vista
-            f = tkfont.Font(family=self.f_display, size=size, weight="bold")
-            if max(f.measure(t) for t in lines) <= W - 2 * m - 12 \
-                    and f.metrics("linespace") * len(lines) <= H - 2 * m - 2:
+        # que quepa en cualquier vista: si no entra ni chiquito, por palabras y, en la
+        # columna mini, letra por letra; si aun así no cabe, no se muestra
+        maxw, maxh = W - 2 * m - 6, H - 2 * m - 2
+        tries = [text, "\n".join(words)]
+        if words:
+            tries.append("\n".join(max(words, key=len).replace("'", "")))
+        best = None
+        for t in tries:
+            lines = t.split("\n")
+            sz = size
+            while sz >= 5:
+                f = tkfont.Font(family=self.f_display, size=sz, weight="bold")
+                if max(f.measure(x) for x in lines) <= maxw \
+                        and f.metrics("linespace") * len(lines) <= maxh:
+                    best = (t, sz)
+                    break
+                sz -= 1
+            if best:
                 break
-            size -= 1
-        cv.itemconfig(self.splash, font=(self.f_display, size, "bold"))
+        if best:
+            cv.itemconfig(self.splash, text=best[0], font=(self.f_display, best[1], "bold"))
+        else:
+            cv.delete(self.splash)
+            self.splash = None
 
     def _draw_bg(self, W, H, R, m, mini):
         """Resplandor, fondo degradado y borde; se dibuja al final y se manda atrás."""
@@ -2176,6 +2334,9 @@ class GauxTimer:
         while cv.bbox(self.title_it)[2] > limit and self.f_title[1] > 9:
             self.f_title = (self.f_title[0], self.f_title[1] - 1, self.f_title[2])
             cv.itemconfig(self.title_it, font=self.f_title)
+        if cv.bbox(self.title_it)[2] > limit:
+            cv.itemconfig(self.title_it, text=self.fit_text(self.title_text, self.f_title,
+                                                            limit - x0))
         self.button(W - m - 18, m + 20, "⚙", "cfg", 14)
         if not self.top:                    # acoplado: no se minimiza
             self.button(W - m - 42, m + 18, "–", "min", 16)
@@ -2229,6 +2390,10 @@ class GauxTimer:
         t = cv.create_text(cx, m + 12, text=self.title_text, anchor="n", justify="center",
                            width=W - 2 * m - 16, font=self.f_title, fill=T["acento2"])
         self.title_it = t
+        bb = cv.bbox(t)
+        if bb[2] - bb[0] > W - 2 * m - 12 or bb[3] - bb[1] > 70:   # una palabra larguísima
+            cv.itemconfig(t, width=0, text=self.fit_text(self.title_text, self.f_title,
+                                                         W - 2 * m - 18))
         y = cv.bbox(t)[3] + 14
         self.pp_c = (cx - 26, y)
         self.hit.append((cx - 38, y - 12, cx - 14, y + 12, "pp"))
@@ -2242,10 +2407,20 @@ class GauxTimer:
                                         font=self.f_label, fill=T["dim"])
         y += 46
         step = int(csize * 1.3)
-        self.digits = self.draw_digits_v(cx - 6, y + csize * 0.6, (cf, csize, "bold"),
+        # h / m / s al lado de los números, medidos con la fuente real (en Windows y en
+        # fuentes anchas no deben pisar los dígitos ni salirse del widget)
+        dw = max(tkfont.Font(family=cf, size=csize, weight="bold").measure(d)
+                 for d in "0123456789")
+        uw = tkfont.Font(family=self.f_sans, size=10).measure("m")
+        dcx = cx - 6
+        ux = max(cx + csize * 0.75, dcx + dw + 3)
+        if ux + uw > W - m - 8:                          # no cabe: correr todo a la izquierda
+            dcx -= ux + uw - (W - m - 8)
+            ux = W - m - 8 - uw
+        self.digits = self.draw_digits_v(dcx, y + csize * 0.6, (cf, csize, "bold"),
                                          step, glow=True)
         for i, u in enumerate("hms"):
-            cv.create_text(cx + csize * 0.75, y + csize * 0.6 + i * step + csize * 0.2,
+            cv.create_text(ux, y + csize * 0.6 + i * step + csize * 0.2,
                            text=u, anchor="w", font=(self.f_sans, 10), fill=T["dim"])
         y += 3 * step + 8
         if vista != "completa":
@@ -2415,8 +2590,8 @@ class GauxTimer:
                 self.cv.itemconfig(d["main"], text=ch)
                 for it, _, _ in d["glows"]:
                     self.cv.itemconfig(it, text=ch)
-                if anim:
-                    d["off"] = -6.0
+                if anim:                     # rebote; menor en las vistas bajas (no se corta)
+                    d["off"] = -6.0 if self.H >= 60 else -2.0
                     if self.fx:
                         d["flash"] = 1.0
 
@@ -3169,7 +3344,12 @@ class GauxTimer:
             self.conf["proyecto"] = new
         if self.detected == old:
             self.detected = new
-        self.data.setdefault("alias", {})[old.lower()] = new   # el título viejo apunta al nuevo
+        al = self.data.setdefault("alias", {})
+        for k, v in list(al.items()):                    # renombres anteriores: A→B→C
+            if v == old:
+                al[k] = new
+        al[old.lower()] = new                            # el título viejo apunta al nuevo
+        al.pop(new.lower(), None)                        # y el nuevo no apunta a nada
         self.save_conf()
         save_json(DATA_FILE, self.data)
         self.refresh_text()
@@ -3617,6 +3797,7 @@ class GauxTimer:
             self.resize_end()
             return
         if self._drag:
+            self.root.update_idletasks()
             x, y = self.root.winfo_x(), self.root.winfo_y()
             self.conf["x"], self.conf["y"] = x, y
             self.conf.setdefault("pos", {})[self.pos_key()] = [x, y]
@@ -4826,7 +5007,7 @@ class Ajustes(tk.Toplevel):
                       "carpeta .live_timer de tu usuario. Nada sale de tu equipo.")
         r = self.line(pg, "")
         self.button(r, "Abrir carpeta de datos", False, self._open_data).pack(side="left")
-        self.button(r, "Exportar proyectos (CSV)", False,
+        self.button(r, "Ver y exportar proyectos", False,
                     lambda: app.open_projects()).pack(side="left", padx=(8, 0))
         self.heading(pg, "Acerca de")
         self.note(pg, f"{APP_NAME} {VERSION} · por Aleksander Gaux"

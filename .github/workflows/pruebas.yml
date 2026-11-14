@@ -1,0 +1,83 @@
+# Gaux Live Timer - batería de pruebas en Mac, Windows y Linux.
+# Prueba el timer completo (vistas, tamaños, DAWs, proyectos, descansos, ajustes, analizador,
+# Gaux Link) y, en Mac y Windows, abre apps con el nombre de cada DAW para ver que las reconoce.
+name: Pruebas
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['README.md', 'LEEME.md']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: pruebas-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    name: ${{ matrix.nombre }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            nombre: Mac
+          - os: windows-latest
+            nombre: Windows
+          - os: ubuntu-latest
+            nombre: Linux
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Dependencias
+        shell: bash
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet numpy psutil pytest pytest-timeout
+          python -m pip install --quiet sounddevice || true
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -y -q xvfb fonts-dejavu; fi
+          python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+
+      - name: Pruebas
+        shell: bash
+        run: |
+          set -o pipefail
+          ARGS="-q -p no:cacheprovider --timeout 300 -rfE --junitxml=resultados.xml tests"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest $ARGS 2>&1 | tee pruebas.log
+          else
+            python -m pytest $ARGS 2>&1 | tee pruebas.log
+          fi
+
+      - name: Resumen
+        if: always()
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import xml.etree.ElementTree as ET, os
+          try:
+              r = ET.parse("resultados.xml").getroot()
+              s = r if r.tag == "testsuite" else r.find("testsuite")
+              t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
+              msg = f"{t} pruebas · {t - f - e - k} OK · {f} fallos · {e} errores · {k} omitidas"
+          except Exception as ex:
+              msg = f"sin resultados ({ex})"
+          print(msg)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
+              fh.write(f"### {os.environ.get('RUNNER_OS')}: {msg}\n")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pruebas-${{ matrix.nombre }}
+          path: |
+            pruebas.log
+            resultados.xml

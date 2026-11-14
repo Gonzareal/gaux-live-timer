@@ -22,6 +22,21 @@ Son los últimos instaladores probados (se actualizan solos con cada cambio). Ca
 
 La guía completa de uso está en [LEEME.md](LEEME.md).
 
+## Pruebas
+
+`tests/` tiene más de 1400 pruebas automáticas que corren en Mac, Windows y Linux en cada cambio
+(pestaña *Actions → Pruebas*). Cubren las 3 vistas × 2 orientaciones × 7 estilos en todos los
+tamaños, el modo Top Live (también en pantalla completa con notch), los 15 DAWs compatibles
+(nombres de proceso y títulos de ventana), el conteo y los proyectos (crear, renombrar, unir,
+eliminar, exportar), los descansos y metas, todas las páginas de Ajustes, el analizador (LUFS
+según EBU R128, true peak, espectro, espectrograma, onda, stereo) y Gaux Link por UDP. En Mac y
+Windows además se abren apps con el nombre de cada DAW para comprobar que las reconoce.
+
+```
+pip install numpy psutil pytest pytest-timeout
+python -m pytest tests          # en Linux: xvfb-run -a python -m pytest tests
+```
+
 ## Licencia
 
 Software libre bajo la **GNU AGPLv3** (Gaux Link usa JUCE bajo esa licencia). Ver `packaging/LICENCIA.txt`.

@@ -561,6 +561,7 @@ class AnalyzerPanel:
         self._hist_t = 0.0
         self.read_pos = self.lufs_pos = 0
         self.pending = np.zeros(0, np.float32)
+        self.perm = None                # permiso de micrófono (macOS), se revisa al abrir audio
 
         self.win = tk.Toplevel(app.root)
         self.win.withdraw()
@@ -854,10 +855,12 @@ class AnalyzerPanel:
         step = next((st for st in (6, 12, 24) if sh * st / (self.db_hi - self.db_lo) >= 15), 24)
         fs_ = 8 if w >= 600 and sh >= 160 else 7
         lblc = hexmix(T["dim"], T["bg"], .2)
+        lsp = tkfont.Font(family=self.sans, size=fs_).metrics("linespace")
         for d in range(-step, int(self.db_lo), -step):
             yi = Y + (self.db_hi - d) / (self.db_hi - self.db_lo) * (sh - 1)
             cv.create_line(X, yi, X + w, yi, fill=major if d % 12 == 0 else minor)
-            if yi < Y + sh - 14:
+            # sin pisar las etiquetas de frecuencia de abajo (ni salirse por arriba)
+            if Y + lsp / 2 <= yi < Y + sh - 7 - lsp:
                 cv.create_text(X + w - 4, yi, text=str(d), anchor="e", font=(self.sans, fs_),
                                fill=lblc, tags=("freqlbl",))
         # eje X: etiquetas por prioridad, sin encimarse
@@ -1036,7 +1039,9 @@ class AnalyzerPanel:
         avail = bottom - top
         rowf = (self.sans, 8)
         bsz = next((b for b in (24, 22, 20, 18, 16, 14, 12)
-                    if ls((self.clockf, b, "bold")) + ls(rowf) <= avail), 12)
+                    if ls((self.clockf, b, "bold")) + ls(rowf) <= avail), None)
+        if bsz is None:                  # franja de la cámara (24-40 px): todo en una línea
+            return self._build_lufs_line(X, Y, w, h, ls)
         big = (self.clockf, bsz, "bold")
         lb = ls(big)
         y = top + max(0, (avail - lb - ls(rowf)) / 2)
@@ -1052,6 +1057,32 @@ class AnalyzerPanel:
             x = cv.bbox(t)[2] + 3
             self.lu[k] = cv.create_text(x, ry, anchor="w", text="—", font=rowf, fill=T["texto"])
             x += 34
+        self.hist_geom = None
+        self._build_meters(X, Y, w, h)
+
+    def _build_lufs_line(self, X, Y, w, h, ls):
+        """Panel bajísimo: «-14.2 LUFS S   M -13.9  I -14.5  TP -1.0» en una sola línea."""
+        T, cv = self.T, self.cv
+        cy = Y + h / 2
+        bsz = next((b for b in (16, 14, 12, 11, 10, 9) if ls((self.clockf, b, "bold")) <= h - 2), 9)
+        big = (self.clockf, bsz, "bold")
+        rowf, fb = (self.sans, 8), (self.sans, 8, "bold")
+        self.lu["st"] = cv.create_text(X + 8, cy, anchor="w", text="—", font=big,
+                                       fill=T["texto"])
+        self.lu["st_unit"] = cv.create_text(X + 8, cy + ls(big) / 2 - 2, anchor="sw", text="",
+                                            font=(self.sans, 7), fill=T["dim"])
+        fnum = tkfont.Font(family=big[0], size=bsz, weight="bold")
+        unit_w = tkfont.Font(family=self.sans, size=7).measure("LUFS S")
+        x = X + 8 + fnum.measure("-88.8") + 4 + unit_w + 12
+        limit = X + w - 44                         # antes de los medidores
+        for k, name in (("m", "M"), ("i", "I"), ("tp", "TP")):
+            t = cv.create_text(x, cy, anchor="w", text=name, font=fb, fill=T["dim"])
+            vx = cv.bbox(t)[2] + 3
+            self.lu[k] = cv.create_text(vx, cy, anchor="w", text="—", font=rowf, fill=T["texto"])
+            if vx + 30 > limit:                    # no cabe: se oculta (sigue midiendo)
+                cv.itemconfig(t, state="hidden")
+                cv.itemconfig(self.lu[k], state="hidden")
+            x = vx + 34
         self.hist_geom = None
         self._build_meters(X, Y, w, h)
 
