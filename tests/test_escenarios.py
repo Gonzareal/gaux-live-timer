@@ -496,3 +496,34 @@ def test_redimensionar_el_panel_con_musica(panel, dw, dh):
     for k, (x0_, y0_, w, h) in panel.rects.items():
         assert panel.PAD + x0_ + w <= panel.W + 1, (k, panel.rects)
     assert not TK_ERRORS
+
+
+PANTALLAS = [(1024, 768), (1280, 800), (1366, 768), (1440, 900), (1920, 1080)]
+
+
+@pytest.mark.parametrize("pantalla", PANTALLAS, ids=[f"{w}x{h}" for w, h in PANTALLAS])
+@pytest.mark.parametrize("orient", ORIENT)
+@pytest.mark.parametrize("vista", VISTAS)
+def test_al_maximo_cabe_en_la_pantalla_del_portatil(fresh, vista, orient, pantalla):
+    """En una laptop, agrandar al máximo nunca deja el widget más grande que la pantalla, y al
+    achicar responde de inmediato (sin zona muerta)."""
+    app = fresh
+    sw, sh = pantalla
+    OS.screens = [(0, 0, sw, sh, 0, 25, sw, sh - 25)]
+    app._scr_cache = None
+    try:
+        setup(app, "gaux", vista, orient)
+        app.root.geometry("+0+25")
+        app.root.update_idletasks()
+        _arrastrar(app, [200] * 10)
+        assert app.W <= sw - 16 + 1 and app.H <= sh - 25 - 16 + 1, (app.W, app.H)
+        x, y = app.root.winfo_x(), app.root.winfo_y()
+        assert 0 <= x and x + app.W <= sw + 1 and 0 <= y and y + app.H <= sh + 1
+        sano(app, "al máximo")
+        w0, h0 = app.W, app.H
+        _arrastrar(app, [-30])
+        assert app.W < w0 or app.H < h0 or app.scale_for(app.pos_key()) <= \
+            L.ESCALA_LIM["mini" if vista == "mini" else "otra"][0] + 1e-6
+    finally:
+        OS.screens = []
+        app._scr_cache = None

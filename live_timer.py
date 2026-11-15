@@ -2005,6 +2005,9 @@ class GauxTimer:
         else:
             W, H, R, m = self._layout_horizontal(vista)
         k = 1.0 if self.top else self.scale_for(self.pos_key())
+        self._k_cap = self._fit_cap(W, H)
+        if not self.top and k > self._k_cap:
+            k = self._k_cap                  # nunca más grande que la pantalla (p. ej. vertical en laptop)
         if abs(k - 1.0) > 0.001:
             W, H, R, m = self._apply_scale(k, W, H, R, m)
         W, H = int(round(W)), int(round(H))          # la geometría de Tk solo acepta enteros
@@ -2016,6 +2019,18 @@ class GauxTimer:
         self._draw_grip(W, H, m)
 
     # ---- tamaño ajustable --------------------------------------------------
+    def _fit_cap(self, W, H):
+        """Escala máxima con la que el widget (de tamaño W×H a escala 1) cabe en su pantalla."""
+        lo = ESCALA_LIM["mini" if self.pos_key().startswith("mini") else "otra"][0]
+        try:
+            x, y = self.root.winfo_x(), self.root.winfo_y()
+            scr = self.screen_for(x, y, max(1, int(W)), max(1, int(H)))
+            vw, vh = (scr[6], scr[7]) if len(scr) >= 8 else (scr[2], scr[3])
+            cap = min((vw - 16) / max(1.0, W), (vh - 16) / max(1.0, H))
+        except Exception:
+            return 9.0
+        return max(lo, math.floor(cap / 0.025) * 0.025)
+
     def scale_for(self, key):
         lo, hi = ESCALA_LIM["mini" if key.startswith("mini") else "otra"]
         try:
@@ -2133,6 +2148,7 @@ class GauxTimer:
         key = self.pos_key()
         lo, hi = ESCALA_LIM["mini" if key.startswith("mini") else "otra"]
         k = max(lo, min(hi, round(k0 * ratio / 0.025) * 0.025))
+        k = max(lo, min(k, getattr(self, "_k_cap", hi)))   # hasta donde quepa en la pantalla
         if abs(k - self.scale_for(key)) < 0.001:
             return
         now = time.monotonic()
