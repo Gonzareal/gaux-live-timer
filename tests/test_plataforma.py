@@ -69,7 +69,14 @@ def wait(cond, t=8.0):
 
 @pytest.fixture
 def pump(app):
-    PUMP.append(app.root.update)
+    import _tkinter
+
+    def pump_once(root=app.root):
+        # como mucho 300 eventos por vuelta: nunca se queda pegado procesando
+        for _ in range(300):
+            if not root.tk.dooneevent(_tkinter.ALL_EVENTS | _tkinter.DONT_WAIT):
+                break
+    PUMP.append(pump_once)
     yield
     PUMP.clear()
 

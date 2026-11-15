@@ -191,3 +191,9 @@ def win_xy(app):
     g = app.root.geometry()
     _, x, y = g.split("+")[0], g.split("+")[1], g.split("+")[2]
     return int(x), int(y)
+
+
+def pytest_collection_modifyitems(items):
+    """Las pruebas del sistema real (apps falsas en Mac/Windows) van primero, con un solo Tk
+    limpio como el timer de verdad, antes de las que abren y cierran cientos de ventanas."""
+    items.sort(key=lambda it: 0 if "test_plataforma" in it.nodeid else 1)
