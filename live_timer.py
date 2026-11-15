@@ -2409,7 +2409,7 @@ class GauxTimer:
         if bb[2] - bb[0] > W - 2 * m - 12 or bb[3] - bb[1] > 70:   # una palabra larguísima
             cv.itemconfig(t, width=0, text=self.fit_text(self.title_text, self.f_title,
                                                          W - 2 * m - 18))
-        y = cv.bbox(t)[3] + 14
+        y = cv.bbox(t)[3] + 18             # fuentes script (Windows) bajan más
         self.pp_c = (cx - 26, y)
         self.hit.append((cx - 38, y - 12, cx - 14, y + 12, "pp"))
         self.draw_pp()
