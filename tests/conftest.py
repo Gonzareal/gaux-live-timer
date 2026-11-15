@@ -95,7 +95,16 @@ def open_daw(app):
 
 
 def make_app():
-    app = L.GauxTimer()
+    import tkinter
+    for intento in range(3):
+        try:
+            app = L.GauxTimer()
+            break
+        except tkinter.TclError:          # Windows a veces no encuentra init.tcl al crear
+            if intento == 2:              # otro Tk seguido (pasa solo en pruebas)
+                raise
+            import time
+            time.sleep(0.5)
     app.root.report_callback_exception = lambda *a: TK_ERRORS.append(a)
     drain(app)
     return app

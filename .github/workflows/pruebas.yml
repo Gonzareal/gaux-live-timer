@@ -50,6 +50,7 @@ jobs:
         run: |
           # cada archivo en su propio proceso: el timer real tiene una sola ventana Tk, y en Mac
           # abrir y cerrar cientos de Tk en un mismo proceso termina trabando el bucle de eventos
+          set +e
           mkdir -p res
           RUN="python -m pytest"
           if [ "$RUNNER_OS" = "Linux" ]; then RUN="xvfb-run -a -s '-screen 0 1920x1080x24' python -m pytest"; fi
