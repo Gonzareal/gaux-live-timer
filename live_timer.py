@@ -2437,7 +2437,8 @@ class GauxTimer:
         for i, u in enumerate("hms"):
             cv.create_text(ux, y + csize * 0.6 + i * step + csize * 0.2,
                            text=u, anchor="w", font=(self.f_sans, 10), fill=T["dim"])
-        y += 3 * step + 8
+        ls_d = tkfont.Font(family=cf, size=csize, weight="bold").metrics("linespace")
+        y = max(y + 3 * step + 8, y + csize * 0.6 + 2 * step + ls_d / 2 + 6)
         if vista != "completa":
             return W, y + m, R, m
         self._proj_row(W / 2, y + 2, W - 2 * m - 20, "center")
