@@ -1969,6 +1969,7 @@ class GauxTimer:
         k = 1.0 if self.top else self.scale_for(self.pos_key())
         if abs(k - 1.0) > 0.001:
             W, H, R, m = self._apply_scale(k, W, H, R, m)
+        W, H = int(round(W)), int(round(H))          # la geometría de Tk solo acepta enteros
         self.W, self.H, self.m_cur = W, H, m
         cv.config(width=W, height=H)
         self._draw_bg(W, H, R, m, mini)
@@ -2438,7 +2439,7 @@ class GauxTimer:
             cv.create_text(ux, y + csize * 0.6 + i * step + csize * 0.2,
                            text=u, anchor="w", font=(self.f_sans, 10), fill=T["dim"])
         ls_d = tkfont.Font(family=cf, size=csize, weight="bold").metrics("linespace")
-        y = max(y + 3 * step + 8, y + csize * 0.6 + 2 * step + ls_d / 2 + 6)
+        y = int(max(y + 3 * step + 8, y + csize * 0.6 + 2 * step + ls_d / 2 + 6))
         if vista != "completa":
             return W, y + m, R, m
         self._proj_row(W / 2, y + 2, W - 2 * m - 20, "center")
