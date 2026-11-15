@@ -726,7 +726,7 @@ class AnalyzerPanel:
         if not self.docked() and hasattr(self.app, "clamp_rect"):
             # tras cambiar la resolución, una posición guardada puede quedar fuera de pantalla
             x, y = self.app.clamp_rect(int(x), int(y), W, H)
-        self.win.geometry(f"{W}x{H}+{int(x)}+{int(y)}")
+        self.win.geometry(f"{int(W)}x{int(H)}+{int(x)}+{int(y)}")
         self.win.after(30, self.app.raise_timer)
 
         self.brand = bool(T.get("marca"))
@@ -1562,8 +1562,9 @@ class AnalyzerPanel:
     def on_drag(self, e):
         if self._resize:
             x0, y0, w0, h0 = self._resize
-            w = max(460, w0 + e.x_root - x0)
-            h = max(120, min(420, h0 + e.y_root - y0))
+            sw = self.win.winfo_screenwidth()
+            w = int(round(max(460, min(sw, w0 + e.x_root - x0))))
+            h = int(round(max(120, min(420, h0 + e.y_root - y0))))
             self.win.geometry(f"{w}x{h}")
             now = time.monotonic()
             if now - self._last_build > 0.12:
@@ -1571,7 +1572,7 @@ class AnalyzerPanel:
                 self.conf["w"], self.conf["h"] = w, h
                 self.build()
         elif self._drag:
-            self.win.geometry(f"+{e.x_root - self._drag[0]}+{e.y_root - self._drag[1]}")
+            self.win.geometry(f"+{int(e.x_root - self._drag[0])}+{int(e.y_root - self._drag[1])}")
 
     def on_release(self, e):
         c = self.conf

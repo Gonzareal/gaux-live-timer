@@ -32,6 +32,7 @@ def text_overlaps(app):
         skip.update(it for it, _, _ in d["glows"])
     if app.splash:
         skip.add(app.splash)                  # bienvenida: tapa todo a propósito por 2 s
+    skip.update(p["it"] for p in getattr(app, "particles", []))   # chispas de meta cumplida
     digit_main = {d["main"] for d in app.digits}
     boxes = []
     for i in cv.find_all():

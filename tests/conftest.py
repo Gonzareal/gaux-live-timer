@@ -181,6 +181,7 @@ def visible_bbox_ok(app, slack=2):
     cv = app.cv
     bad = []
     deco = {app.scan} | {it for pair in getattr(app, "bolts", []) for it in pair}
+    deco |= {p["it"] for p in getattr(app, "particles", [])}      # chispas: la ventana las recorta
     for i in cv.find_all():
         if cv.itemcget(i, "state") == "hidden" or i in deco:   # rayos y barrido: se recortan
             continue
