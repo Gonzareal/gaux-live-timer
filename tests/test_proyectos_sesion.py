@@ -114,3 +114,17 @@ def test_botones_de_la_fila_se_ven_completos(fresh, tema, confirmar):
             right = b.winfo_rootx() + b.winfo_width() - w.canvas.winfo_rootx()
             assert right <= cw + 1, (b.cget("text"), right, cw)
     w.destroy()
+
+
+@pytest.mark.parametrize("ancho", [1024, 1280, 800])
+def test_proyectos_en_pantalla_angosta(fresh, ancho, monkeypatch):
+    """En una pantalla de 1024 px (o menos) la fila completa, con sus botones, cabe."""
+    app = fresh
+    monkeypatch.setattr(L.Proyectos, "winfo_screenwidth", lambda self: ancho)
+    app.project_rec("Westing Time With U (Orginal Mix)")["segundos"] = 999 * 3600
+    app.open_projects()
+    w = app.projects_win
+    app.root.update()
+    need = sum(c[1] for c in w.COLS) + w.act_w + 4 + 60
+    assert need <= max(ancho - 40, 120 + 66 + 60 + 60 + 74 + 70 + 78 + 76 + w.act_w + 64)
+    w.destroy()

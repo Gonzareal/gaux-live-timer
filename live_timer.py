@@ -4343,6 +4343,17 @@ class Proyectos(tk.Toplevel):
         # ancho de los botones de cada fila, medido con los botones reales (con la
         # confirmación de Eliminar, la más ancha): nada queda cortado en Mac ni en Windows
         self.act_w = self._measure_actions() + 16
+        # pantallas angostas (1024 px, escalado alto en Windows): se angostan las columnas
+        # de texto para que la fila entera, con sus botones, quepa sin cortarse
+        cols = [list(c) for c in self.COLS]
+        excess = sum(c[1] for c in cols) + self.act_w + 4 + 60 - (self.winfo_screenwidth() - 40)
+        for i, lo in ((0, 120), (7, 76), (6, 78)):          # Proyecto, DAW, Última vez
+            if excess <= 0:
+                break
+            cut = min(excess, cols[i][1] - lo)
+            cols[i][1] -= cut
+            excess -= cut
+        self.COLS = [tuple(c) for c in cols]
         hdr = tk.Frame(self, bg=T["pista"])
         hdr.pack(fill="x", padx=18, pady=(8, 0))
         keys = {"Proyecto": "nombre", "Total": "total", "Hoy": "hoy", "Semana": "semana",
