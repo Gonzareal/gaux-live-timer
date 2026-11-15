@@ -51,7 +51,7 @@ def text_overlaps(app):
             ix = min(b[2], c[2]) - max(b[0], c[0])
             iy = min(b[3], c[3]) - max(b[1], c[1])
             if ix > 3 and iy > 3:
-                bad.append((t, u))
+                bad.append((t, u, b, c, cv.itemcget(i, "font"), cv.itemcget(j, "font")))
     return bad
 
 

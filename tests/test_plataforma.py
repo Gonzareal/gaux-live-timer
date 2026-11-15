@@ -51,13 +51,27 @@ def _real(name):
     return getattr(mod, "_REAL_" + name, getattr(mod, name))
 
 
+PUMP = []
+
+
 def wait(cond, t=8.0):
+    """Espera; en Mac deja correr el bucle de eventos (así se entera de las apps abiertas,
+    igual que el timer real, que siempre tiene su bucle andando)."""
     end = time.monotonic() + t
     while time.monotonic() < end:
+        for p in PUMP:
+            p()
         if cond():
             return True
         time.sleep(0.2)
     return cond()
+
+
+@pytest.fixture
+def pump(app):
+    PUMP.append(app.root.update)
+    yield
+    PUMP.clear()
 
 
 # ---------------------------------------------------------------- Mac
@@ -83,7 +97,7 @@ def make_mac_app(folder, name, exe):
 
 @pytest.mark.skipif(not MAC, reason="Mac")
 @pytest.mark.parametrize("name,exe", MAC_APPS, ids=[a for a, _ in MAC_APPS])
-def test_mac_reconoce_el_daw_abierto(name, exe):
+def test_mac_reconoce_el_daw_abierto(pump, name, exe):
     folder = tempfile.mkdtemp(prefix="gaux_daw_")
     app, path = make_mac_app(folder, name, exe)
     running = _real("_mac_live_running")
@@ -105,7 +119,7 @@ def test_mac_reconoce_el_daw_abierto(name, exe):
 
 
 @pytest.mark.skipif(not MAC, reason="Mac")
-def test_mac_app_al_frente():
+def test_mac_app_al_frente(pump):
     folder = tempfile.mkdtemp(prefix="gaux_daw_")
     app, path = make_mac_app(folder, "Ableton Live 12 Suite", "Live")
     front = _real("frontmost_app")
