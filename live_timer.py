@@ -4340,14 +4340,9 @@ class Proyectos(tk.Toplevel):
         self.hint.pack(anchor="w", padx=18)
 
         # encabezado de columnas (clic para ordenar)
-        # ancho de los botones de cada fila, medido con la fuente real (con la confirmación
-        # de Eliminar, que es la más ancha): nada queda cortado ni debajo de la barra
-        fb = tkfont.Font(family=sans, size=9, weight="bold")
-        fn = tkfont.Font(family=sans, size=9)
-        btn_w = lambda t, f: f.measure(t) + 2 * 6 + 2 * 2 + 4          # noqa: E731
-        self.act_w = 12 + max(
-            sum(btn_w(t, fn) for t in ("Usar", "Renombrar", "Eliminar")),
-            fb.measure("¿Eliminar 999h 59m?") + 8 + btn_w("Sí, eliminar", fb) + btn_w("No", fn))
+        # ancho de los botones de cada fila, medido con los botones reales (con la
+        # confirmación de Eliminar, la más ancha): nada queda cortado en Mac ni en Windows
+        self.act_w = self._measure_actions() + 16
         hdr = tk.Frame(self, bg=T["pista"])
         hdr.pack(fill="x", padx=18, pady=(8, 0))
         keys = {"Proyecto": "nombre", "Total": "total", "Hoy": "hoy", "Semana": "semana",
@@ -4385,6 +4380,23 @@ class Proyectos(tk.Toplevel):
         self.geometry(f"+{max(0, (sw - self.winfo_reqwidth()) // 2)}+"
                       f"{max(30, (sh - self.winfo_reqheight()) // 3)}")
         self._tick()
+
+    def _measure_actions(self):
+        T, widest = self.T, 0
+        for opts in ((("Usar", False), ("Renombrar", False), ("Eliminar", False)),
+                     (("¿Eliminar 999h 59m?", None), ("Sí, eliminar", True), ("No", False))):
+            f = tk.Frame(self, bg=T["bg"])
+            for text, danger in opts:
+                if danger is None:
+                    tk.Label(f, text=text, font=(self.sans, 9, "bold"), fg=T["texto"],
+                             bg=T["bg"]).pack(side="left", padx=(2, 6))
+                else:
+                    tk.Label(f, text=text, font=(self.sans, 9, "bold" if danger else "normal"),
+                             padx=6, pady=1).pack(side="left", padx=2)
+            f.update_idletasks()
+            widest = max(widest, f.winfo_reqwidth())
+            f.destroy()
+        return widest
 
     def _fit_scroll(self):
         """La lista siempre empieza arriba: si cabe entera, no se desplaza."""

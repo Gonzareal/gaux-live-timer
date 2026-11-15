@@ -95,6 +95,8 @@ def test_aviso_de_descanso_visible(fresh, tema, vista, orient, monkeypatch):
     open_daw(app)
     step(app, 51 * 60)
     assert app.lvl == 2
+    cv = app.cv
+    before = [cv.itemcget(d["main"], "state") or "normal" for d in app.digits]
     monkeypatch.setattr(L.time, "monotonic", lambda: 1000.5)     # fase "cartel"
     app._break_flash(True)
     cv = app.cv
@@ -108,7 +110,8 @@ def test_aviso_de_descanso_visible(fresh, tema, vista, orient, monkeypatch):
     assert b[0] >= -2 and b[1] >= -2 and b[2] <= app.W + 2 and b[3] <= app.H + 2
     monkeypatch.setattr(L.time, "monotonic", lambda: 1003.0)     # fase "reloj"
     app._break_flash(True)
-    assert all(cv.itemcget(d["main"], "state") == "normal" for d in app.digits)
+    # el reloj vuelve tal cual (en vertical los ':' siguen ocultos)
+    assert [cv.itemcget(d["main"], "state") or "normal" for d in app.digits] == before
     assert all(cv.itemcget(it, "state") == "hidden" for it in app.brk_items)
 
 
