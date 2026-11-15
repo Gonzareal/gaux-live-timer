@@ -48,27 +48,37 @@ jobs:
       - name: Pruebas
         shell: bash
         run: |
-          set -o pipefail
-          ARGS="-q -p no:cacheprovider --timeout 240 --timeout-method=thread -rfE --junitxml=resultados.xml tests"
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest $ARGS 2>&1 | tee pruebas.log
-          else
-            python -m pytest $ARGS -v 2>&1 | tee pruebas.log
-          fi
+          # cada archivo en su propio proceso: el timer real tiene una sola ventana Tk, y en Mac
+          # abrir y cerrar cientos de Tk en un mismo proceso termina trabando el bucle de eventos
+          mkdir -p res
+          RUN="python -m pytest"
+          if [ "$RUNNER_OS" = "Linux" ]; then RUN="xvfb-run -a -s '-screen 0 1920x1080x24' python -m pytest"; fi
+          fail=0
+          for f in tests/test_*.py; do
+            n=$(basename "$f" .py)
+            echo "::group::$n"
+            eval $RUN -q -p no:cacheprovider --timeout 240 --timeout-method=thread -rfE \
+              --junitxml="res/$n.xml" "$f" 2>&1 | tee -a pruebas.log
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = 0 ] || [ "$rc" = 5 ] || fail=1
+            echo "::endgroup::"
+          done
+          grep -E "^(FAILED|ERROR) " pruebas.log || true
+          exit $fail
 
       - name: Resumen
         if: always()
         shell: bash
         run: |
           python - <<'EOF'
-          import xml.etree.ElementTree as ET, os
-          try:
-              r = ET.parse("resultados.xml").getroot()
-              s = r if r.tag == "testsuite" else r.find("testsuite")
-              t, f, e, k = (int(s.get(x, 0)) for x in ("tests", "failures", "errors", "skipped"))
-              msg = f"{t} pruebas · {t - f - e - k} OK · {f} fallos · {e} errores · {k} omitidas"
-          except Exception as ex:
-              msg = f"sin resultados ({ex})"
+          import xml.etree.ElementTree as ET, os, glob
+          t = f = e = k = 0
+          for p in glob.glob("res/*.xml"):
+              r = ET.parse(p).getroot()
+              for s in ([r] if r.tag == "testsuite" else r.findall("testsuite")):
+                  t += int(s.get("tests", 0)); f += int(s.get("failures", 0))
+                  e += int(s.get("errors", 0)); k += int(s.get("skipped", 0))
+          msg = f"{t} pruebas · {t - f - e - k} OK · {f} fallos · {e} errores · {k} omitidas"
           print(msg)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as fh:
               fh.write(f"### {os.environ.get('RUNNER_OS')}: {msg}\n")
@@ -80,4 +90,4 @@ jobs:
           name: pruebas-${{ matrix.nombre }}
           path: |
             pruebas.log
-            resultados.xml
+            res/

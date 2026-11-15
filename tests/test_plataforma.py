@@ -186,9 +186,9 @@ def test_titulo_y_ventana_de_un_pid_cualquiera(pid):
 
 
 @pytest.mark.parametrize("text", ["áéíóúñ¿¡", "abc", ""])
-def test_fuentes(text):
+def test_fuentes(app, text):
     import tkinter.font as tkfont
-    fams = sorted(set(tkfont.families()))[:20]
+    fams = sorted(set(tkfont.families(root=app.root)))[:20]
     for f in fams:
         assert _real("font_covers")(f, text) in (True, False)
 
