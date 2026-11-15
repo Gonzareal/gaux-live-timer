@@ -163,15 +163,19 @@ def test_maximo_500_sesiones(fresh):
     assert len(app.data["sesiones"]) == 500
 
 
-def test_cambio_de_dia_a_medianoche(fresh, monkeypatch):
+def test_cambio_de_dia_a_medianoche(fresh):
+    import reloj
     app = fresh
-    open_daw(app)
-    monkeypatch.setattr(app, "_today", lambda: "2026-11-14")
-    step(app, 60)
-    monkeypatch.setattr(app, "_today", lambda: "2026-11-15")
-    step(app, 30)
-    assert app.data["dias"]["2026-11-14"] == pytest.approx(60, abs=1)
-    assert app.data["dias"]["2026-11-15"] == pytest.approx(30, abs=1)
+    try:
+        reloj.set_now(dt.datetime(2026, 11, 14, 23, 58))
+        open_daw(app)
+        for _ in range(45):                      # 3 minutos, el reloj avanza con cada tick
+            reloj.advance(4)
+            step(app, 4)
+        assert app.data["dias"]["2026-11-14"] == pytest.approx(120, abs=1)
+        assert app.data["dias"]["2026-11-15"] == pytest.approx(60, abs=1)
+    finally:
+        reloj.restore()
 
 
 def test_autoguardado_cada_30s(fresh):

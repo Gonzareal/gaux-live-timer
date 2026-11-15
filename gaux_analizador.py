@@ -155,7 +155,7 @@ class Surface:
                             bd=0, bg=bg)
         self.item = parent_cv.create_window(int(x), int(y), window=self.cv, anchor="nw")
         panel.win_items.append(self.item)
-        self.photo = tk.PhotoImage(width=self.w, height=self.h)
+        self.photo = tk.PhotoImage(master=self.cv, width=self.w, height=self.h)
         panel.bind_child(self.cv)
 
     def fill(self, color_rgb):
@@ -224,7 +224,8 @@ class LinkReceiver:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
             self.sock.bind(("127.0.0.1", LINK_PORT))
             self.ok = True
-            threading.Thread(target=self._run, daemon=True).start()
+            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread.start()
         except OSError:
             self.sock = None
 
@@ -483,6 +484,22 @@ def lufs(e):
     return -0.691 + 10 * math.log10(e) if e > 1e-12 else -math.inf
 
 
+def _tp_phases(taps=64, beta=8.0):
+    """Las 3 fases intermedias de un interpolador x4 (sinc con ventana Kaiser)."""
+    n = np.arange(-taps // 2 + 1, taps // 2 + 1)
+    out = []
+    for p in (1, 2, 3):
+        t = n - p / 4
+        x = t / (taps / 2)
+        w = np.i0(beta * np.sqrt(np.clip(1 - x * x, 0, None))) / np.i0(beta)
+        out.append((np.sinc(t) * w)[::-1])
+    return out
+
+
+TP_TAPS = 64
+TP_PHASES = _tp_phases(TP_TAPS)
+
+
 class Loudness:
     def __init__(self, sr):
         self.sr = sr
@@ -494,7 +511,7 @@ class Loudness:
         self.sub = deque(maxlen=30)
         self.blocks = []
         self.tp_max = -math.inf
-        self.tail = np.zeros((32, 2), np.float32)
+        self.tail = np.zeros((TP_TAPS - 1, 2), np.float32)
         self.hist = deque(maxlen=120)           # short-term, 1 por segundo
         self._integ, self._integ_n = -math.inf, -1
 
@@ -507,19 +524,18 @@ class Loudness:
         self.sub.append(e)
         if len(self.sub) >= 4:
             self.blocks.append(sum(list(self.sub)[-4:]) / 4)
-        # true peak: sobremuestreo x4 por FFT con solape para evitar bordes
-        if float(np.abs(chunk).max()) < 1e-3:          # casi silencio: no puede subir el TP
-            self.tail = chunk[-32:].copy()
-            return
+        # true peak (BS.1770): sobremuestreo x4 con un filtro FIR polifásico; las muestras
+        # anteriores se guardan para que no haya bordes entre bloques
         seg = np.concatenate([self.tail, chunk])
-        self.tail = chunk[-32:].copy()
-        S = np.fft.rfft(seg, axis=0)
-        m = len(seg)
-        up = np.zeros((2 * m + 1, 2), complex)
-        up[:len(S)] = S
-        y = np.fft.irfft(up, n=4 * m, axis=0) * 4
-        tp = max(float(np.abs(y[128:-128]).max()), float(np.abs(chunk).max()))
-        self.tp_max = max(self.tp_max, db(tp))
+        self.tail = seg[-(TP_TAPS - 1):].copy()
+        peak = float(np.abs(chunk).max())
+        if peak < 1e-3:                                # casi silencio: no puede subir el TP
+            return
+        for c in range(seg.shape[1]):
+            x = seg[:, c].astype(np.float64)
+            for h in TP_PHASES:
+                peak = max(peak, float(np.abs(np.convolve(x, h, "valid")).max()))
+        self.tp_max = max(self.tp_max, db(peak))
 
     def momentary(self):
         return lufs(sum(list(self.sub)[-4:]) / 4) if len(self.sub) >= 4 else -math.inf

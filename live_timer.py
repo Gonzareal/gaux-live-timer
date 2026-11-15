@@ -145,7 +145,7 @@ TEMAS = {
 WARN = "#FBBF24"
 MODE_DESC = {
     "autonomo": "Autónomo vigila tu racha de trabajo seguido. El timer se pone "
-                "ámbar cuando se acerca el break y rojo cuando toca descansar. "
+                "ámbar cuando se acerca el break y muestra BREAK cuando toca descansar. "
                 "Ajusta los tiempos abajo.",
     "normal": "Normal solo cuenta tu tiempo real y el avance de tus metas. "
               "No te indicará cuándo descansar.",
@@ -1314,12 +1314,45 @@ def load_json(path):
     return {}
 
 
-def save_json(path, data):
+def _finite(v):
+    """Copia lista para JSON estricto: un NaN o infinito se guarda como 0."""
+    if isinstance(v, float):
+        return v if math.isfinite(v) else 0.0
+    if isinstance(v, dict):
+        return {k: _finite(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_finite(x) for x in v]
+    return v
+
+
+def _write_json(path, data):
     os.makedirs(APP_DIR, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(_finite(data), f, indent=2, ensure_ascii=False, allow_nan=False)
+        f.flush()
+        try:
+            os.fsync(f.fileno())                 # que un corte de luz no deje el archivo a medias
+        except OSError:
+            pass
     os.replace(tmp, path)
+
+
+_SAVE_WARNED = set()
+
+
+def save_json(path, data):
+    """Guarda sin detener nunca el timer: si el disco está lleno o sin permisos, sigue
+    contando en memoria y lo vuelve a intentar en el próximo guardado."""
+    try:
+        _write_json(path, data)
+        _SAVE_WARNED.discard(path)
+        return True
+    except (OSError, ValueError, TypeError) as e:
+        if path not in _SAVE_WARNED:
+            _SAVE_WARNED.add(path)
+            print(f"No se pudo guardar {os.path.basename(path)}: {e}", file=sys.stderr)
+        return False
 
 
 def deep_merge(base, over):
@@ -1433,6 +1466,9 @@ def sanitize_data(d):
         out["alias"] = {k: v for k, v in al.items() if isinstance(k, str) and isinstance(v, str)} \
             if isinstance(al, dict) else {}
     return out
+
+
+CLOCK_MAX = 99 * 3600 + 59 * 60 + 59
 
 
 def fmt_clock(s):
@@ -1950,7 +1986,9 @@ class GauxTimer:
         self.bars, self.hit = [], []
         self.chip_label, self.chip_items = None, []
         self.title_it = self.status_it = self.auto_it = None
+        self.clock_glitch_end, self._clock_seen = 0.0, False
         self.proj_it = None
+        self.proj_w = None
         self.brk_items = None               # aviso de descanso sobre el reloj
         self.status_font = None
         self.chip_y = None
@@ -2037,6 +2075,8 @@ class GauxTimer:
             b["y"] *= k
         if self.chip_y is not None:
             self.chip_y *= k
+        if getattr(self, "proj_w", None):
+            self.proj_w *= k                      # el nombre del proyecto cabe a cualquier escala
         self.f_title = self._font_scaled(self.f_title, k)
         if t_box:
             # las fuentes no crecen exactamente en proporción (sobre todo en Windows): si el
@@ -2371,11 +2411,12 @@ class GauxTimer:
         y = m + 140
         cv.create_line(x0, y, W - m - 14, y, fill=mix(T["borde"], T["bg"], .78))
         y += 8
+        lf = self.f_label if self.brand else (self.f_sans, 10, "bold")
         for k in goals:
             g = self.conf["metas"][k]
-            lbl = cv.create_text(x0, y + 6, anchor="w", text=g["nombre"].upper() if self.brand else g["nombre"],
-                                 font=self.f_label if self.brand else (self.f_sans, 10, "bold"),
-                                 fill=T["texto"])
+            name = g["nombre"].upper() if self.brand else g["nombre"]
+            lbl = cv.create_text(x0, y + 6, anchor="w", text=name, font=lf, fill=T["texto"],
+                                 tags=("goalname:" + k,))
             val = cv.create_text(W - m - 14, y + 6, anchor="e", text="",
                                  font=(self.f_sans, 10), fill=T["dim"])
             self._goal_bar(k, x0 + 3, W - m - 17, y + 21, lbl, val)
@@ -2437,7 +2478,8 @@ class GauxTimer:
                                          step, glow=True)
         for i, u in enumerate("hms"):
             cv.create_text(ux, y + csize * 0.6 + i * step + csize * 0.2,
-                           text=u, anchor="w", font=(self.f_sans, 10), fill=T["dim"])
+                           text=u, anchor="w", font=(self.f_sans, 10), fill=T["dim"],
+                           tags=("clockunit",))
         ls_d = tkfont.Font(family=cf, size=csize, weight="bold").metrics("linespace")
         y = int(max(y + 3 * step + 8, y + csize * 0.6 + 2 * step + ls_d / 2 + 6))
         if vista != "completa":
@@ -2446,11 +2488,13 @@ class GauxTimer:
         y += 18
         cv.create_line(x0, y, W - m - 14, y, fill=mix(T["borde"], T["bg"], .78))
         y += 10
+        lf = self.f_label if self.brand else (self.f_sans, 10, "bold")
         for k in goals:
             g = self.conf["metas"][k]
-            lbl = cv.create_text(x0, y + 6, anchor="w", text=g["nombre"].upper() if self.brand else g["nombre"],
-                                 font=self.f_label if self.brand else (self.f_sans, 10, "bold"),
-                                 fill=T["texto"])
+            name = g["nombre"].upper() if self.brand else g["nombre"]
+            lbl = cv.create_text(x0, y + 6, anchor="w",
+                                 text=self.fit_text(name, lf, W - m - 14 - x0),
+                                 font=lf, fill=T["texto"])
             val = cv.create_text(x0, y + 35, anchor="w", text="",
                                  font=(self.f_sans, 9), fill=T["dim"])
             self._goal_bar(k, x0 + 3, W - m - 17, y + 21, lbl, val)
@@ -2496,8 +2540,14 @@ class GauxTimer:
         if self.brand and auto:
             tail += " · AUTO"
         head = "▸ "
-        name = self.fit_text(label, font, maxw - self.fit_w(head + tail, font))
-        return head + name + tail
+        # si el espacio es poco, primero se suelta "AUTO", luego el total: el nombre manda
+        tails = [tail, f" · {fmt_short(tot)}", ""]
+        want = min(len(label), 10)
+        for t in tails:
+            name = self.fit_text(label, font, maxw - self.fit_w(head + t, font))
+            if len(name.rstrip("…")) >= want or t == "":
+                return head + name + t
+        return head + name
 
     def fit_w(self, text, font):
         self.fit_text("", font, 1)                       # asegura la fuente en caché
@@ -2525,6 +2575,33 @@ class GauxTimer:
             for x1 in (cx - 5 * k, cx + 1.5 * k):
                 cv.create_rectangle(x1, cy - 6 * k, x1 + 3.5 * k, cy + 6 * k, fill=col,
                                     outline="", tags=("btn_pp",))
+
+    def _fit_goal_label(self, b):
+        """El nombre de la meta usa todo el espacio que le deja el valor de la derecha."""
+        cv = self.cv
+        if self.vertical or cv.itemcget(b["val"], "anchor") != "e":
+            return
+        name = b.get("name")
+        if name is None:
+            name = b["name"] = cv.itemcget(b["lbl"], "text")
+        vb = cv.bbox(b["val"])
+        x = cv.coords(b["lbl"])[0]
+        limit = (vb[0] - 10 if vb and cv.itemcget(b["val"], "text") else self.W) - x
+        txt = self.fit_text(name, cv.itemcget(b["lbl"], "font"), max(10, limit))
+        if cv.itemcget(b["lbl"], "text") != txt:
+            cv.itemconfig(b["lbl"], text=txt)
+
+    def _fit_auto(self):
+        """La línea del modo autónomo no se mete debajo del botón de la derecha."""
+        if not self.auto_it or self.chip_y is not None:
+            return
+        cv = self.cv
+        x = cv.coords(self.auto_it)[0]
+        right = cv.coords(self.chip_items[0]) if self.chip_items else None
+        limit = (min(right[0::2]) - 8) if right else self.W - (self.MARGIN + 14) * getattr(self, "k", 1.0)
+        txt = self.fit_text(self.auto_msg, cv.itemcget(self.auto_it, "font"), limit - x)
+        if cv.itemcget(self.auto_it, "text") != txt:
+            cv.itemconfig(self.auto_it, text=txt)
 
     def update_chip(self, label):
         """Botón de acción junto a la línea del modo autónomo."""
@@ -2601,6 +2678,14 @@ class GauxTimer:
 
     def set_clock(self, text):
         anim = self.conf["animaciones"]
+        # Gaux: al cambiar de minuto el reloj hace un glitch de un instante (más largo en
+        # cada hora cumplida). Sutil: unas décimas de segundo, sin moverse de su sitio.
+        prev = "".join(d["ch"] for d in self.digits)
+        if anim and self.fx and self.counting and len(prev) >= 5 and len(text) >= 5 \
+                and prev[:5] != text[:5] and getattr(self, "_clock_seen", False):
+            hour = prev[:2] != text[:2]
+            self.clock_glitch_end = time.monotonic() + (0.5 if hour else 0.18)
+        self._clock_seen = True
         for d, ch in zip(self.digits, text):
             if d["ch"] != ch:
                 d["ch"] = ch
@@ -2656,7 +2741,7 @@ class GauxTimer:
         return 0, self._v(f"Racha {fmt_short(streak)} · en pausa", f"STREAK {fmt_short(streak)} · HOLD")
 
     def refresh_text(self):
-        self.set_clock(fmt_clock(self.session))
+        self.set_clock(fmt_clock(min(self.session, CLOCK_MAX)))   # el reloj tiene 2 cifras de horas
         if self.status_it:
             txt = GAUX_STATUS[self.state] if self.brand else {"sesion": "En sesión",
                    "fondo": "Pausa · fuera del DAW",
@@ -2693,6 +2778,7 @@ class GauxTimer:
             else:
                 vt = f"{fmt_short(cur)} / {fmt_goal(tgt)}"
             self.cv.itemconfig(b["val"], text=vt)
+            self._fit_goal_label(b)
         self.lvl, self.auto_msg = self.fatigue()
         if self.auto_it:
             self.cv.itemconfig(self.auto_it, text=self.auto_msg)
@@ -2703,6 +2789,7 @@ class GauxTimer:
             else:
                 chip = None
             self.update_chip(chip)
+            self._fit_auto()
         self.draw_pp()
 
     # ---- animación --------------------------------------------------------
@@ -2745,47 +2832,62 @@ class GauxTimer:
                     cv.itemconfig(it, state="hidden")
                 for d in self.digits:
                     if d.get("_hid"):
-                        d["_hid"] = False
-                        cv.itemconfig(d["main"], state="normal")
+                        st = d.pop("_hid")              # el estado que tenía (':' ocultos)
+                        cv.itemconfig(d["main"], state=st)
                         for it, _, _ in d["glows"]:
-                            cv.itemconfig(it, state="normal")
+                            cv.itemconfig(it, state=st)
+                cv.itemconfig("clockunit", state="normal")
             return
         if not self.brk_items:
-            boxes = [cv.bbox(d["main"]) for d in self.digits]
+            boxes = [cv.bbox(d["main"]) for d in self.digits
+                     if cv.itemcget(d["main"], "state") != "hidden"]
+            boxes += [cv.bbox(u) for u in cv.find_withtag("clockunit")]
             boxes = [b for b in boxes if b]
             if not boxes:
                 return
             x1, y1 = min(b[0] for b in boxes), min(b[1] for b in boxes)
             x2, y2 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+            # el cartel ocupa la caja del reloj, sin salirse nunca del widget
+            x1, y1 = max(1, x1 - 4), max(1, y1 + 1)
+            x2, y2 = min(self.W - 1, x2 + 4), min(self.H - 1, y2 - 1)
             w, h = x2 - x1, y2 - y1
-            word = ("RECHARGE" if self.brand else "BREAK") if w > h * 1.2 else "BRK"
-            if w < h * 0.8:                      # columna vertical: letras apiladas
-                word = "\n".join("BREAK")
             fill = T["acento"] if self.brand else self.T.get("alerta", ALERT)
-            r = min(8, h / 4)
-            bg = rrect(cv, x1 - 4, y1 + 1, x2 + 4, y2 - 1, r, outline="", fill=fill)
-            size = int(max(7, min(h * 0.55, w / max(1, len(word.split("\n")[0])) * 1.25)))
-            if "\n" in word:
-                size = int(max(7, min(w * 0.75, h / 6.5)))
+            bg = rrect(cv, x1, y1, x2, y2, min(8, h / 4, w / 4), outline="", fill=fill)
             fam = self.f_label[0] if self.brand else self.f_sans
-            tx = cv.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=word, justify="center",
-                                font=(fam, -size, "bold"), fill="#FFFFFF")
+            long_w = "RECHARGE" if self.brand else "BREAK"
+            words = [long_w, "BREAK", "BRK"] if w >= h * 0.8 else ["\n".join("BREAK"), "BRK"]
+            tx = cv.create_text((x1 + x2) / 2, (y1 + y2) / 2, text="", justify="center",
+                                fill="#FFFFFF")
+            for word in dict.fromkeys(words):
+                lines = word.count("\n") + 1
+                size = int(max(6, min(h * 0.6 / lines, 40)))
+                cv.itemconfig(tx, text=word)
+                while True:
+                    cv.itemconfig(tx, font=(fam, -size, "bold"))
+                    b = cv.bbox(tx)
+                    fits = b[2] - b[0] <= w - 4 and b[3] - b[1] <= h
+                    if fits or size <= 6:
+                        break
+                    size -= 1
+                if fits and size >= 7:
+                    break
             self.brk_items = [bg, tx]
         for it in self.brk_items:
             cv.itemconfig(it, state="normal")
             cv.tag_raise(it)
         for d in self.digits:
             if not d.get("_hid"):
-                d["_hid"] = True
+                d["_hid"] = cv.itemcget(d["main"], "state") or "normal"
                 cv.itemconfig(d["main"], state="hidden")
                 for it, _, _ in d["glows"]:
                     cv.itemconfig(it, state="hidden")
+        cv.itemconfig("clockunit", state="hidden")
 
     def render_frame(self, force=False):
         T, cv = self.T, self.cv
         anim = self.conf["animaciones"]
         now = time.monotonic()
-        dtf = min(0.1, now - self.last_frame)
+        dtf = max(0.0, min(0.1, now - self.last_frame))
         self.last_frame = now
         self._dtf = dtf
         f20 = dtf * 20                                   # 1.0 = un cuadro de los 20 fps de antes
@@ -3079,6 +3181,20 @@ class GauxTimer:
                               else mix(T["texto"], T["bg"], 0.42))
         if not anim:
             return
+        # glitch del reloj al cambiar de minuto / de hora
+        cg = getattr(self, "clock_glitch_end", 0.0)
+        if cg:
+            if now < cg:
+                for d in self.digits:
+                    self._co(d["main"], d["x"] + random.choice((-2, -1, 0, 1, 2)),
+                             d["y"] + d["off"])
+                    self._ic(d["main"], fill=random.choice(("#FFFFFF", T["acento2"], T["texto"])))
+            else:
+                self.clock_glitch_end = 0.0
+                for d in self.digits:
+                    self._co(d["main"], d["x"], d["y"] + d["off"])
+                    self._ic(d["main"], fill=T["texto"] if self.counting
+                             else mix(T["texto"], T["bg"], 0.42))
         # glitch del título: desplazamiento rojo / blanco unas décimas de segundo
         if self.ghosts:
             if now >= self.glitch_next:
@@ -3302,6 +3418,17 @@ class GauxTimer:
     def _today(self):
         return dt.date.today().isoformat()
 
+    @staticmethod
+    def _split_days(delta):
+        """Reparte 'delta' segundos que acaban ahora entre hoy y ayer (si cruzó medianoche)."""
+        now = dt.datetime.now()
+        into = now.hour * 3600 + now.minute * 60 + now.second + now.microsecond / 1e6
+        today = now.date()
+        if delta <= into + 0.01:                  # (centésimas: todo a hoy)
+            return [(today.isoformat(), delta)]
+        return [((today - dt.timedelta(days=1)).isoformat(), delta - into),
+                (today.isoformat(), into)]
+
     # ---- proyectos ------------------------------------------------------------
     def project_name(self):
         if self.conf.get("proyecto_auto", True) and self.detected:
@@ -3361,6 +3488,11 @@ class GauxTimer:
             self.conf["proyecto"] = new
         if self.detected == old:
             self.detected = new
+        # la sesión en curso y el historial también pasan al nombre nuevo
+        for d in [self.session_proj] + [x.get("proyectos") for x in self.data.get("sesiones", [])
+                                        if isinstance(x, dict)]:
+            if isinstance(d, dict) and old in d:
+                d[new] = d.get(new, 0) + d.pop(old)
         al = self.data.setdefault("alias", {})
         for k, v in list(al.items()):                    # renombres anteriores: A→B→C
             if v == old:
@@ -3373,6 +3505,10 @@ class GauxTimer:
 
     def delete_project(self, name):
         self.data.get("proyectos", {}).pop(name, None)
+        self.session_proj.pop(name, None)
+        for x in self.data.get("sesiones", []):
+            if isinstance(x, dict) and isinstance(x.get("proyectos"), dict):
+                x["proyectos"].pop(name, None)
         if self.conf.get("proyecto") == name:
             self.conf["proyecto"] = ""
         self.save_conf()
@@ -3482,12 +3618,12 @@ class GauxTimer:
                 self.streak += delta
                 self.last_count_v = self.vclock
                 self.session += delta
-                d = self._today()
-                self.data["dias"][d] = self.data["dias"].get(d, 0) + delta
                 pn = self.project_name()
                 rec = self.project_rec(pn)
                 rec["segundos"] += delta
-                rec["dias"][d] = rec["dias"].get(d, 0) + delta
+                for d, part in self._split_days(delta):     # a medianoche: cada día lo suyo
+                    self.data["dias"][d] = self.data["dias"].get(d, 0) + part
+                    rec["dias"][d] = rec["dias"].get(d, 0) + part
                 rec["ultima"] = dt.datetime.now().isoformat(timespec="minutes")
                 rec["daw"] = CURRENT_DAW[0]
                 self.session_proj[pn] = self.session_proj.get(pn, 0.0) + delta
@@ -4160,8 +4296,9 @@ def fmt_when(iso):
 
 
 class Proyectos(tk.Toplevel):
+    PAGE = 60                     # filas que se dibujan de una vez
     COLS = [("Proyecto", 230, "w"), ("Total", 70, "e"), ("Hoy", 60, "e"),
-            ("Semana", 64, "e"), ("Mes", 64, "e"), ("Sesiones", 66, "e"),
+            ("Semana", 66, "e"), ("Mes", 60, "e"), ("Sesiones", 74, "e"),
             ("Última vez", 96, "e"), ("DAW", 96, "w")]
 
     def __init__(self, app):
@@ -4203,6 +4340,14 @@ class Proyectos(tk.Toplevel):
         self.hint.pack(anchor="w", padx=18)
 
         # encabezado de columnas (clic para ordenar)
+        # ancho de los botones de cada fila, medido con la fuente real (con la confirmación
+        # de Eliminar, que es la más ancha): nada queda cortado ni debajo de la barra
+        fb = tkfont.Font(family=sans, size=9, weight="bold")
+        fn = tkfont.Font(family=sans, size=9)
+        btn_w = lambda t, f: f.measure(t) + 2 * 6 + 2 * 2 + 4          # noqa: E731
+        self.act_w = 12 + max(
+            sum(btn_w(t, fn) for t in ("Usar", "Renombrar", "Eliminar")),
+            fb.measure("¿Eliminar 999h 59m?") + 8 + btn_w("Sí, eliminar", fb) + btn_w("No", fn))
         hdr = tk.Frame(self, bg=T["pista"])
         hdr.pack(fill="x", padx=18, pady=(8, 0))
         keys = {"Proyecto": "nombre", "Total": "total", "Hoy": "hoy", "Semana": "semana",
@@ -4211,12 +4356,12 @@ class Proyectos(tk.Toplevel):
             l = self.cell(hdr, name, w, a, (sans, 9, "bold"), T["dim"], T["pista"])
             l.config(cursor="hand2")
             l.bind("<Button-1>", lambda e, k=keys[name]: self.set_sort(k))
-        self.cell(hdr, "", 190, "w", (sans, 9), T["dim"], T["pista"])
+        self.cell(hdr, "", self.act_w, "w", (sans, 9), T["dim"], T["pista"])
 
         wrap = tk.Frame(self, bg=T["bg"])
         wrap.pack(fill="both", expand=True, padx=18, pady=(0, 6))
         self.canvas = tk.Canvas(wrap, bg=T["bg"], highlightthickness=0, height=330,
-                                width=sum(w for _, w, _ in self.COLS) + 196)
+                                width=sum(w for _, w, _ in self.COLS) + self.act_w + 4)
         sb = tk.Scrollbar(wrap, orient="vertical", command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=sb.set)
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -4331,7 +4476,9 @@ class Proyectos(tk.Toplevel):
                                      "aparecerá aquí.", font=(self.sans, 10), fg=T["dim"],
                      bg=T["bg"]).pack(anchor="w", pady=20)
             return
-        for i, k in enumerate(names):
+        limit = getattr(self, "limit", self.PAGE)
+        more = len(names) - limit
+        for i, k in enumerate(names[:limit]):
             bg = mix(T["bg"], T["pista"], .55) if i % 2 else T["bg"]
             row = tk.Frame(self.rows, bg=bg)
             row.pack(fill="x")
@@ -4347,7 +4494,19 @@ class Proyectos(tk.Toplevel):
             acts = tk.Frame(row, bg=bg)
             acts.pack(side="left", padx=(8, 0))
             self._actions(acts, k, bg)
+        if more > 0:          # con cientos de proyectos la ventana abre al instante
+            n = min(more, self.PAGE)
+            b = tk.Label(self.rows, text=f"Mostrar {n} más  ·  quedan {more}",
+                         font=(self.sans, 10, "bold"), fg=T["texto"], bg=T["pista"],
+                         padx=12, pady=5, cursor="hand2")
+            b.bind("<Button-1>", lambda e: self._more())
+            b.pack(anchor="w", pady=10, padx=4)
         self.after_idle(self._fit_scroll)
+
+    def _more(self):
+        self.limit = getattr(self, "limit", self.PAGE) + self.PAGE
+        self._last_keys = None
+        self.refresh()
 
     def _actions(self, acts, k, bg, confirm=False):
         """Botones de la fila. Eliminar pide confirmación ahí mismo (sin ventanas aparte,
@@ -4814,8 +4973,8 @@ class Ajustes(tk.Toplevel):
         opts.pack(fill="x")
         self.mode_cards = {}
         for m, title, desc in (("autonomo", "Avisarme cuándo descansar",
-                                "El timer se pone ámbar cuando se acerca el descanso y rojo "
-                                "cuando toca parar. Sin notificaciones: solo colores."),
+                                "El reloj se pone ámbar cuando se acerca el descanso y "
+                                "muestra BREAK cuando toca parar. Sin notificaciones."),
                                ("normal", "Solo contar mi tiempo",
                                 "Cuenta tus horas y tus metas, sin avisos de descanso.")):
             f = tk.Frame(opts, bg=self.card_bg, highlightthickness=2, cursor="hand2")
