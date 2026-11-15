@@ -18,7 +18,7 @@ jobs:
   pruebas:
     name: ${{ matrix.nombre }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -49,11 +49,11 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ARGS="-q -p no:cacheprovider --timeout 300 -rfE --junitxml=resultados.xml tests"
+          ARGS="-q -p no:cacheprovider --timeout 240 --timeout-method=thread -rfE --junitxml=resultados.xml tests"
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a -s "-screen 0 1920x1080x24" python -m pytest $ARGS 2>&1 | tee pruebas.log
           else
-            python -m pytest $ARGS 2>&1 | tee pruebas.log
+            python -m pytest $ARGS -v 2>&1 | tee pruebas.log
           fi
 
       - name: Resumen
