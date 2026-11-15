@@ -70,10 +70,14 @@ def make_mac_app(folder, name, exe):
                        "CFBundleIdentifier": "com.gauxtest." + "".join(c for c in name
                                                                        if c.isalnum()).lower(),
                        "CFBundleVersion": "1.0", "LSUIElement": False}, f)
+    # un ejecutable de verdad (macOS no abre apps cuyo ejecutable es un script)
     path = os.path.join(app, "Contents", "MacOS", exe)
-    with open(path, "w") as f:
-        f.write("#!/bin/sh\nsleep 40\n")
+    src = os.path.join(folder, "espera.c")
+    with open(src, "w") as f:
+        f.write("#include <unistd.h>\nint main(void){sleep(40);return 0;}\n")
+    subprocess.run(["cc", "-O0", "-o", path, src], check=True)
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    subprocess.run(["codesign", "--force", "-s", "-", app], capture_output=True)
     return app, path
 
 
@@ -86,7 +90,11 @@ def test_mac_reconoce_el_daw_abierto(name, exe):
     assert not running(), "antes de abrir no debe haber DAW"
     subprocess.run(["open", "-g", app], check=True)          # -g: sin pasarla al frente
     try:
-        assert wait(running), f"no reconoció {name} abierto"
+        ok = wait(running)
+        if not ok:
+            ps = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True).stdout
+            print("ps:", [ln for ln in ps.splitlines() if "gaux_daw_" in ln])
+        assert ok, f"no reconoció {name} abierto"
         # el respaldo con ps también lo reconoce
         out = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True).stdout
         assert any(".app/Contents/MacOS/" in ln and L.daw_match(ln) for ln in out.splitlines())

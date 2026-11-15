@@ -17,7 +17,7 @@ SRS = [44100, 48000, 88200, 96000]
 
 
 def sine(f, db, secs, sr, phase=0.0, ch=2):
-    t = np.arange(int(secs * sr)) / sr
+    t = np.arange(int(round(secs * sr))) / sr
     x = (10 ** (db / 20)) * np.sin(2 * np.pi * f * t + phase)
     return np.repeat(x[:, None], ch, axis=1).astype(np.float32)
 
@@ -222,7 +222,7 @@ def test_link_saludo_y_respuesta(link, sender, host, track):
 
 
 @pytest.mark.parametrize("sr", SRS)
-@pytest.mark.parametrize("frames", [64, 256, 512, 1024, 2048])
+@pytest.mark.parametrize("frames", [32, 64, 128, 256, 441, 480])   # el plugin manda ≤ 480
 def test_link_audio_llega_al_motor(link, sender, sr, frames):
     reset_link(link)
     e = G.AudioEngine()
@@ -382,8 +382,19 @@ COMBOS = [c for r in range(1, 5) for c in itertools.combinations(MODS, r)]
 
 @pytest.mark.parametrize("mods", COMBOS, ids=["+".join(c) for c in COMBOS])
 @pytest.mark.parametrize("size", [(900, 172), (1600, 132), (460, 66), (700, 40), (1200, 24)])
-def test_panel_modulos_y_tamanos(panel, mods, size):
+@pytest.mark.parametrize("audio", ["con_audio", "sin_audio"])
+def test_panel_modulos_y_tamanos(panel, mods, size, audio):
+    panel.engine.stream = None
+    panel.engine.error = None if audio == "con_audio" else "sin_dispositivo"
     rebuild(panel, *size, mods)
+    if audio == "sin_audio":                              # el aviso cabe en cualquier tamaño
+        cv = panel.cv
+        b = cv.bbox(panel.msg_it)
+        assert cv.itemcget(panel.msg_it, "text")
+        assert b[0] >= 0 and b[1] >= 0 and b[2] <= panel.W and b[3] <= panel.H, b
+        bb = cv.bbox(panel.msg_bg)
+        assert bb[1] >= -1 and bb[3] <= panel.H + 1
+        return
     prepare(panel)
     play(panel, noise(-12, 0.4, 48000))
     cv = panel.cv
@@ -400,6 +411,8 @@ def test_panel_modulos_y_tamanos(panel, mods, size):
             assert b[0] >= -1 and b[2] <= panel.W + 1 and b[1] >= -1 and b[3] <= panel.H + 1, \
                 cv.itemcget(i, "text")
             boxes.append((cv.itemcget(i, "text"), b))
+    msg = cv.itemcget(panel.msg_it, "text")
+    boxes = [(t, b) for t, b in boxes if t != msg]        # el aviso va encima, con fondo
     for n, (t, b) in enumerate(boxes):                    # ningún texto pisa a otro
         for u, c in boxes[n + 1:]:
             ix = min(b[2], c[2]) - max(b[0], c[0])

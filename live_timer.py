@@ -2004,6 +2004,7 @@ class GauxTimer:
         """Escala todo lo dibujado (posiciones, letras, grosores) y la geometría guardada."""
         cv = self.cv
         self.k = k
+        t_box = cv.bbox(self.title_it) if self.title_it else None
         cv.scale("all", 0, 0, k, k)
         for it in cv.find_all():
             typ = cv.type(it)
@@ -2036,6 +2037,20 @@ class GauxTimer:
         if self.chip_y is not None:
             self.chip_y *= k
         self.f_title = self._font_scaled(self.f_title, k)
+        if t_box:
+            # las fuentes no crecen exactamente en proporción (sobre todo en Windows): si el
+            # título quedó más grande que su espacio escalado, se achica hasta caber
+            tw, th = (t_box[2] - t_box[0]) * k + 2, (t_box[3] - t_box[1]) * k + 2
+            spec = list(cv.tk.splitlist(cv.itemcget(self.title_it, "font")))
+            size = abs(int(float(spec[1])))
+            while size > MIN_FONT:
+                b = cv.bbox(self.title_it)
+                if b[2] - b[0] <= tw and b[3] - b[1] <= th:
+                    break
+                size -= 1
+                spec[1] = size
+                cv.itemconfig(self.title_it, font=tuple(spec))
+            self.f_title = (self.f_title[0], size, *self.f_title[2:])
         self.f_label = self._font_scaled(self.f_label, k)
         self.csize = max(int(self.csize * k), 12)
         self.draw_pp()
@@ -5165,8 +5180,19 @@ class Ajustes(tk.Toplevel):
 
         def more():
             from tkinter import colorchooser
-            res = colorchooser.askcolor(color=pc.get("color"), parent=self,
-                                        title="Color del Modo Personal")
+            # el selector de color del sistema no debe quedar escondido detrás de Ajustes
+            # (la misma razón por la que Eliminar proyecto ya no usa ventanas del sistema)
+            activate_self()
+            self.attributes("-topmost", False)
+            try:
+                res = colorchooser.askcolor(color=pc.get("color"), parent=self,
+                                            title="Color del Modo Personal")
+            except tk.TclError:
+                res = None
+            finally:
+                if self.winfo_exists():
+                    self.attributes("-topmost", True)
+                    self.lift()
             if res and res[1]:
                 pick(res[1].upper())
 

@@ -1121,33 +1121,54 @@ class AnalyzerPanel:
 
     def _update_msg(self):
         e = self.engine
+        low = getattr(self, "H", 172) < 110          # franja baja: aviso de una línea
         if e.stream is not None and self.perm == "denegado":
             app = HOST_APP
-            txt = (f"macOS está bloqueando el audio (permiso de micrófono).\n"
-                   f"Ajustes del Sistema → Privacidad y seguridad → Micrófono → activa {app}.\n"
-                   "Luego ctrl+clic aquí → Reconectar audio.")
+            txt = (f"macOS bloquea el audio: activa {app} en Privacidad → Micrófono · "
+                   "luego ctrl+clic → Reconectar audio") if low else (
+                f"macOS está bloqueando el audio (permiso de micrófono).\n"
+                f"Ajustes del Sistema → Privacidad y seguridad → Micrófono → activa {app}.\n"
+                "Luego ctrl+clic aquí → Reconectar audio.")
         elif e.stream is not None:
             txt = ""
         elif e.error == "sin_dispositivo":
-            txt = ("Sin audio todavía.\nPon el plugin Gaux Link al final del Master de tu DAW "
-                   "(recomendado), o instala BlackHole (Mac) / VB-Cable (Windows).")
+            txt = ("Sin audio: pon Gaux Link al final del Master de tu DAW "
+                   "(o BlackHole / VB-Cable)") if low else (
+                "Sin audio todavía.\nPon el plugin Gaux Link al final del Master de tu DAW "
+                "(recomendado), o instala BlackHole (Mac) / VB-Cable (Windows).")
         elif e.error:
-            txt = f"No se pudo abrir la entrada de audio (se reintenta solo):\n{e.error[:120]}"
+            txt = (f"Sin entrada de audio (se reintenta solo): {e.error[:60]}") if low else (
+                f"No se pudo abrir la entrada de audio (se reintenta solo):\n{e.error[:120]}")
         else:
             txt = ""
         if not hasattr(self, "msg_it"):
             return
-        self.cv.itemconfig(self.msg_it, text=txt)
+        cv = self.cv
+        cv.itemconfig(self.msg_it, text=txt, font=(self.sans, 11), width=self.W - 80)
         for it in self.win_items:            # las superficies tapan el aviso: ocultarlas
-            self.cv.itemconfig(it, state="hidden" if txt else "normal")
+            cv.itemconfig(it, state="hidden" if txt else "normal")
         if txt:
-            x1, y1, x2, y2 = self.cv.bbox(self.msg_it)
-            self.cv.delete(self.msg_bg)
-            self.msg_bg = rrect(self.cv, x1 - 16, y1 - 10, x2 + 16, y2 + 10, 10,
+            # que el aviso quepa en cualquier alto (incluida la franja junto a la cámara)
+            size = 11
+            while True:
+                x1, y1, x2, y2 = cv.bbox(self.msg_it)
+                if (y2 - y1 <= self.H - 6 and x2 - x1 <= self.W - 24) or size <= 7:
+                    break
+                size -= 1
+                cv.itemconfig(self.msg_it, font=(self.sans, size), width=self.W - 40)
+            if y2 - y1 > self.H - 6:              # ni a 7 pt: una línea recortada
+                cv.itemconfig(self.msg_it, width=0,
+                              text=txt.split("\n")[0][:max(10, int(self.W / 6))])
+                x1, y1, x2, y2 = cv.bbox(self.msg_it)
+            px = 16 if self.W - (x2 - x1) > 40 else 4
+            py = max(1, min(10, (self.H - (y2 - y1)) / 2 - 1))
+            cv.delete(self.msg_bg)
+            self.msg_bg = rrect(cv, max(1, x1 - px), max(1, y1 - py), min(self.W - 1, x2 + px),
+                                min(self.H - 1, y2 + py), min(10, (y2 - y1) / 2 + py),
                                 fill=self.T["bg"], outline=self.T["borde"])
-            self.cv.tag_raise(self.msg_it)
+            cv.tag_raise(self.msg_it)
         else:
-            self.cv.itemconfig(self.msg_bg, state="hidden")
+            cv.itemconfig(self.msg_bg, state="hidden")
 
     # ---- bucles ------------------------------------------------------------------
     def loud_loop(self):

@@ -21,6 +21,9 @@ def safe(fresh, monkeypatch):
     monkeypatch.setattr(L.subprocess, "Popen", lambda *a, **k: calls["popen"].append(a))
     monkeypatch.setattr(fresh, "quit", lambda: calls.__setitem__("quit", calls["quit"] + 1))
     monkeypatch.setattr(L, "install_autostart", lambda quiet=False: None)
+    from tkinter import colorchooser
+    monkeypatch.setattr(colorchooser, "askcolor",
+                        lambda **k: ((34, 197, 94), "#22c55e"))   # el selector del sistema
     monkeypatch.setattr(L, "remove_autostart", lambda quiet=False: None)
     fresh._calls = calls
     yield fresh
@@ -50,6 +53,7 @@ def text_of(w):
 
 def click(w):
     """Clic real: presionar y soltar (los botones de Tk responden a cualquiera de los dos)."""
+    w.winfo_toplevel().update()             # en Windows la ventana debe estar ya dibujada
     w.event_generate("<ButtonPress-1>", x=3, y=3)
     if w.winfo_exists():
         w.event_generate("<ButtonRelease-1>", x=3, y=3)
@@ -274,6 +278,17 @@ def test_ajustes_dos_veces_no_duplica(safe):
     assert app.settings is first
     wins = [w for w in app.root.winfo_children() if isinstance(w, L.Ajustes)]
     assert len(wins) == 1
+
+
+def test_selector_de_color_del_sistema(safe):
+    app = safe
+    app.conf["tema"] = "personal"
+    app.apply_conf()
+    s = open_settings(app, "apariencia")
+    click(labels(s, "Más…")[0])
+    assert s.winfo_exists() and s.attributes("-topmost")
+    s.save()
+    assert app.conf["personal"]["color"].lower() == "#22c55e"
 
 
 def test_salir_desde_ajustes(safe):
