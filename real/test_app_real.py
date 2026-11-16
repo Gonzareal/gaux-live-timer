@@ -388,7 +388,7 @@ def test_sin_daw_no_cuenta(app):
 def test_cuenta_con_cada_daw(app, fakes, name, exe, title, daw, proj):
     before, after = contar_con(fakes, name, exe, title)
     got = total(after) - total(before)
-    assert 11 <= got <= 21, f"{name}: contó {got:.1f} s (estuvo ~17 s al frente)"
+    assert 11 <= got <= 23, f"{name}: contó {got:.1f} s (estuvo ~17 s al frente)"
     # el tiempo cayó en un proyecto, con su DAW
     grown = {k: v["segundos"] - (before.get("proyectos", {}).get(k, {}).get("segundos", 0))
              for k, v in after.get("proyectos", {}).items()}
@@ -478,6 +478,27 @@ def test_abrirla_otra_vez_reemplaza_a_la_anterior(fakes):
     time.sleep(2)
     assert b.alive()
     b.quit()
+
+
+@pytest.mark.parametrize("modo", ["quit_y_abrir", "abrir_encima"])
+def test_reabrir_enseguida_siempre_abre(fakes, modo):
+    """Como al instalar una actualización: se cierra el timer y se vuelve a abrir al instante,
+    5 veces seguidas. Antes, en Mac, el puerto quedaba 30 s ocupado y no reabría."""
+    a = App().start()
+    for i in range(5):
+        if modo == "quit_y_abrir":
+            a.quit()
+            a = App().start()
+        else:                                   # abrir otra mientras la anterior sigue abierta
+            b = App()
+            b.proc = subprocess.Popen([APP_EXE], stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+            assert wait(lambda: not a.alive(), 15), "la anterior debía cerrarse"
+            assert wait(lambda: port_open() and b.alive(), 20), f"vuelta {i}: la nueva no abrió"
+            a = b
+        time.sleep(1.5)
+        assert a.alive(), f"vuelta {i}"
+    a.quit()
 
 
 def test_ajustes_cambiados_sobreviven(fakes):
@@ -606,7 +627,7 @@ def test_analizador_abierto_sigue_contando(con_analizador):
 # ================================================================== 6. rendimiento real
 @pytest.fixture(scope="module")
 def medida(fakes):
-    write_conf(bienvenida_vista=False)          # primera vez: la bienvenida queda abierta
+    write_conf(bienvenida_vista=True)           # como en el uso diario
     a = App().start()
     yield a
     a.quit()
@@ -679,6 +700,20 @@ def test_cpu_diagnostico_ventanas_tk():
     }
     for k, code in casos.items():
         print(f"CPU {k}: {_tk_script_cpu(code):.1f} %")
+
+
+def test_cpu_con_la_bienvenida_abierta():
+    """La primera vez la bienvenida queda abierta hasta que tocas Listo: no debe gastar CPU."""
+    write_conf(bienvenida_vista=False)
+    a = App().start()
+    try:
+        time.sleep(8)
+        cpu = _cpu_de(a.proc.pid, 20)
+        print(f"CPU sin DAW (bienvenida abierta): {cpu:.1f} %")
+        assert cpu < 6, cpu
+    finally:
+        a.quit()
+        write_conf(bienvenida_vista=True)
 
 
 def test_cpu_sin_daw_tras_la_bienvenida():

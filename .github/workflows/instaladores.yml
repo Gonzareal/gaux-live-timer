@@ -188,6 +188,9 @@ jobs:
       - name: Pruebas reales con la app instalada (DAWs reales en pantalla, guardado, Link, CPU)
         timeout-minutes: 45
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
         run: |
           python -m pip install --quiet pytest psutil pillow
           python -m pytest real -v -s -p no:cacheprovider -rfE --junitxml=reales.xml 2>&1 | Tee-Object -FilePath reales.log

@@ -4274,7 +4274,8 @@ class GauxTimer:
         w.update_idletasks()
         sw = w.winfo_screenwidth()
         w.geometry(f"+{(sw - w.winfo_reqwidth()) // 2}+{90}")
-        activate_self()
+        # sin activar la app: aquí no se escribe nada, y en Mac una ventana sin bordes con la
+        # app activa gastaba ~15 % de CPU mientras seguía abierta
         if not first:
             w.after(7000, close)
 
@@ -5608,6 +5609,33 @@ def _setup_log():
     sys.excepthook = hook
 
 
+def acquire_lock(tries=80, wait=0.15):
+    """Toma el puerto de 'una sola instancia'. Si hay otro timer abierto le pide que se cierre
+    y espera a que suelte el puerto (hasta ~12 s). Devuelve el socket escuchando, o None."""
+    for attempt in range(tries):
+        lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        if SYSTEM != "Windows":
+            # Mac/Linux: tras cerrar el timer el puerto queda unos 30 s en TIME_WAIT y sin
+            # esto el timer nuevo (al actualizar o reabrir) no podía abrir. Igual nunca hay
+            # dos timers escuchando a la vez: eso lo impide el sistema.
+            lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            lock.bind(("127.0.0.1", LOCK_PORT))
+            lock.listen(1)
+            return lock
+        except OSError:
+            lock.close()
+            if attempt == 0:
+                try:
+                    c = socket.create_connection(("127.0.0.1", LOCK_PORT), timeout=1)
+                    c.sendall(b"QUIT")
+                    c.close()
+                except OSError:
+                    pass
+            time.sleep(wait)
+    return None
+
+
 def main():
     _setup_log()
     if "--instalar-inicio" in sys.argv:
@@ -5624,24 +5652,10 @@ def main():
 
     # Una sola instancia: si ya hay un timer abierto, se le pide que se cierre
     # y esta versión toma su lugar (así siempre corre el código más reciente).
-    lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    for attempt in range(40):
-        try:
-            lock.bind(("127.0.0.1", LOCK_PORT))
-            break
-        except OSError:
-            if attempt == 0:
-                try:
-                    c = socket.create_connection(("127.0.0.1", LOCK_PORT), timeout=1)
-                    c.sendall(b"QUIT")
-                    c.close()
-                except OSError:
-                    pass
-            time.sleep(0.15)
-    else:
+    lock = acquire_lock()
+    if lock is None:
         print(f"{APP_NAME} ya está abierto. Ciérralo con ctrl+clic → Salir y vuelve a intentar.")
         sys.exit(0)
-    lock.listen(1)
 
     _migrate_autostart()
     app = GauxTimer()
