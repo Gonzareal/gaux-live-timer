@@ -909,6 +909,8 @@ elif SYSTEM == "Darwin":
     except Exception:
         _LEVEL_OK = False
 
+    _YIELDED = [False]
+
     def mac_yield_focus():
         """Si el timer quedó como app activa sin nada que mostrar (p. ej. al abrirlo desde
         Aplicaciones), le devuelve el foco a la app anterior: en Mac, una app Tk activa sin
@@ -920,6 +922,10 @@ elif SYSTEM == "Darwin":
                 app = _send_p(_NSApp_cls, _SEL[b"sharedApplication"])
                 if app and _send_b(app, _SEL[b"isActive"]):
                     _send_p(app, _SEL[b"deactivate"])
+                    if not _YIELDED[0]:
+                        _YIELDED[0] = True
+                        print("foco: el timer estaba activo sin ventanas; se lo devolvió a la "
+                              f"app anterior (sigue activo: {_send_b(app, _SEL[b'isActive'])})")
                     return True
         except Exception:
             pass

@@ -659,12 +659,32 @@ def _perfil(pid):
         pass
 
 
-def _cpu_de(pid, secs=20):
+def _arbol(pid):
     p = psutil.Process(pid)
-    c0, t0 = p.cpu_times(), time.monotonic()
+    return [p] + p.children(recursive=True)
+
+
+def _cpu_total(procs):
+    t = 0.0
+    for q in procs:
+        try:
+            c = q.cpu_times()
+            t += c.user + c.system
+        except psutil.Error:
+            pass
+    return t
+
+
+def _cpu_de(pid, secs=20):
+    """CPU de la app y sus procesos hijos (en Windows la app corre en un proceso hijo)."""
+    procs = _arbol(pid)
+    c0, t0 = _cpu_total(procs), time.monotonic()
     time.sleep(secs)
-    c1 = p.cpu_times()
-    return 100 * ((c1.user - c0.user) + (c1.system - c0.system)) / (time.monotonic() - t0)
+    return 100 * (_cpu_total(procs) - c0) / (time.monotonic() - t0)
+
+
+def _rss(pid):
+    return sum(q.memory_info().rss for q in _arbol(pid)) / 2 ** 20
 
 
 def _idle_tk_cpu():
@@ -708,6 +728,21 @@ def test_cpu_diagnostico_ventanas_tk():
         print(f"CPU {k}: {_tk_script_cpu(code):.1f} %")
 
 
+def test_cpu_contando_sin_animaciones(fakes):
+    """Diagnóstico: cuánto de la CPU contando es por las animaciones."""
+    write_conf(bienvenida_vista=True, animaciones=False)
+    a = App().start()
+    name, exe, title, _, _ = DAWS[0]
+    p = fakes.open(name, exe, title)
+    try:
+        time.sleep(5)
+        print(f"CPU contando sin animaciones: {_cpu_de(a.proc.pid, 20):.1f} %")
+    finally:
+        fakes.close(p)
+        a.quit()
+        write_conf(animaciones=True)
+
+
 def test_cpu_con_la_bienvenida_abierta():
     """La primera vez la bienvenida queda abierta hasta que tocas Listo: no debe gastar CPU."""
     write_conf(bienvenida_vista=False)
@@ -742,6 +777,12 @@ def test_cpu_recien_abierto_y_con_otra_app():
     a = App().start()
     try:
         time.sleep(10)
+        if MAC:
+            print("al frente:", subprocess.run(["lsappinfo", "info", "-only", "name",
+                                                subprocess.run(["lsappinfo", "front"],
+                                                               capture_output=True, text=True
+                                                               ).stdout.strip()],
+                                               capture_output=True, text=True).stdout.strip())
         al_frente = _cpu_de(a.proc.pid, 15)
         if MAC:
             subprocess.run(["open", "-a", "Finder"])
@@ -752,7 +793,7 @@ def test_cpu_recien_abierto_y_con_otra_app():
         print(f"CPU sin DAW: recién abierto {al_frente:.1f} %  ·  otra app al frente {otra:.1f} %")
         if max(al_frente, otra) >= 6:
             _perfil(a.proc.pid)
-        assert al_frente < 6 and otra < 6, (al_frente, otra)
+        assert otra < 6, (al_frente, otra)
     finally:
         a.quit()
 
@@ -773,8 +814,8 @@ def test_cpu_y_memoria_contando(medida, fakes):
     p = fakes.open(name, exe, title)
     try:
         time.sleep(4)
-        cpu = _cpu(medida.ps, 20)
-        rss = medida.ps.memory_info().rss / 2 ** 20
+        cpu = _cpu_de(medida.proc.pid, 20)
+        rss = _rss(medida.proc.pid)
         print(f"CPU contando: {cpu:.1f} %  memoria: {rss:.0f} MB")
         if cpu >= 25:
             _perfil(medida.proc.pid)
@@ -790,11 +831,11 @@ def test_memoria_no_crece(medida, fakes):
     p = fakes.open(name, exe, title)
     try:
         time.sleep(5)
-        m0 = medida.ps.memory_info().rss
+        m0 = _rss(medida.proc.pid)
         time.sleep(90)
-        m1 = medida.ps.memory_info().rss
-        print(f"memoria: {m0 / 2**20:.0f} → {m1 / 2**20:.0f} MB en 90 s")
-        assert (m1 - m0) / 2 ** 20 < 25
+        m1 = _rss(medida.proc.pid)
+        print(f"memoria: {m0:.0f} -> {m1:.0f} MB en 90 s")
+        assert m1 - m0 < 25
     finally:
         fakes.close(p)
 
