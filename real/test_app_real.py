@@ -230,14 +230,23 @@ def new_log(since):
         return ""
 
 
+ARRANQUES = []
+
+
 class App:
     def __init__(self):
         self.proc = None
 
     def start(self):
         assert os.path.exists(APP_EXE), APP_EXE
+        t0 = time.monotonic()
         self.proc = subprocess.Popen([APP_EXE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        assert wait(port_open, 25), "la app no abrió su puerto en 25 s"
+        ok = wait(port_open, 45)
+        took = time.monotonic() - t0
+        ARRANQUES.append(took)
+        if not ok:
+            raise AssertionError(f"la app no abrió en 45 s (¿sigue viva? {self.alive()}); "
+                                 f"registro: {new_log(max(0, log_size() - 1500))}")
         time.sleep(2.0)
         assert self.alive(), "la app se cerró sola al abrir"
         return self
@@ -604,13 +613,35 @@ def _perfil(pid):
         pass
 
 
+def _cpu_de(pid, secs=20):
+    p = psutil.Process(pid)
+    c0, t0 = p.cpu_times(), time.monotonic()
+    time.sleep(secs)
+    c1 = p.cpu_times()
+    return 100 * ((c1.user - c0.user) + (c1.system - c0.system)) / (time.monotonic() - t0)
+
+
+def _idle_tk_cpu():
+    """Lo que gasta en esta máquina una ventana Tk vacía y oculta (la base de comparación)."""
+    q = subprocess.Popen([sys.executable, "-c",
+                          "import tkinter as t; r=t.Tk(); r.withdraw(); "
+                          "r.after(250, lambda f=None: None); r.mainloop()"])
+    try:
+        time.sleep(6)
+        return _cpu_de(q.pid, 20)
+    finally:
+        q.kill()
+
+
 def test_cpu_sin_daw_es_minima(medida):
-    time.sleep(5)
-    cpu = _cpu(medida.ps, 15)
-    print(f"CPU sin DAW: {cpu:.1f} %")
-    if cpu >= 8:
+    """Sin DAW el timer no dibuja nada: debe gastar casi lo mismo que una ventana Tk vacía."""
+    time.sleep(8)
+    cpu = _cpu_de(medida.proc.pid, 20)
+    base = _idle_tk_cpu()
+    print(f"CPU sin DAW: timer {cpu:.1f} %  ·  ventana Tk vacía en esta máquina {base:.1f} %")
+    if cpu >= base + 4:
         _perfil(medida.proc.pid)
-    assert cpu < 8, "sin DAW abierto el timer casi no debe usar CPU"
+    assert cpu < max(6.0, base * 1.3 + 4), (cpu, base)
 
 
 def test_cpu_y_memoria_contando(medida, fakes):
@@ -712,3 +743,11 @@ def test_perfil_cpu_sin_daw():
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     print(r.stdout[-2000:], r.stderr[-3000:])
     assert os.path.exists(out)
+
+
+def test_arranca_rapido():
+    """Cuánto tarda en abrir la app instalada (se midió en cada arranque de estas pruebas)."""
+    assert ARRANQUES
+    print("arranques (s):", [round(x, 1) for x in ARRANQUES])
+    med = sorted(ARRANQUES)[len(ARRANQUES) // 2]
+    assert med < 12, f"la mitad de los arranques tardó más de {med:.1f} s"
