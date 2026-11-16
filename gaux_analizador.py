@@ -223,6 +223,13 @@ class LinkReceiver:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
             self.sock.bind(("127.0.0.1", LINK_PORT))
+            if hasattr(socket, "SIO_UDP_CONNRESET"):
+                # Windows: si un plugin se cierra justo después de saludar, la respuesta rebota
+                # y recvfrom lanzaría un error que mataba la recepción. Se apaga ese aviso.
+                try:
+                    self.sock.ioctl(socket.SIO_UDP_CONNRESET, False)
+                except (OSError, ValueError):
+                    pass
             self.ok = True
             self.thread = threading.Thread(target=self._run, daemon=True)
             self.thread.start()
@@ -242,44 +249,55 @@ class LinkReceiver:
         while True:
             try:
                 pkt, addr = self.sock.recvfrom(65536)
+            except ConnectionResetError:
+                continue                        # un plugin que ya se cerró: se ignora y sigue
             except OSError:
-                return
-            if len(pkt) < 16:
+                if self.sock is None or self.sock.fileno() < 0:
+                    return                      # el socket se cerró: fin
+                time.sleep(0.01)
                 continue
-            kind = pkt[:4]
-            now = time.monotonic()
-            if kind == b"GXLK" and len(pkt) >= 24:
-                ch = pkt[5]
-                inst, seq, sr, frames = struct.unpack_from("<IIII", pkt, 8)
-                if not (1 <= ch <= 2) or frames <= 0 or len(pkt) < 24 + frames * ch * 4:
-                    continue
-                if self.active is None or (inst != self.active and now - self.audio_t > 1.5):
-                    self.active = inst          # la primera pista que envía (o la que quedó)
-                if inst != self.active:
-                    continue
-                self.audio_t = now
-                self.sr = sr or 48000
-                self.packets += 1
-                sink = self.sink
-                if sink is not None:
-                    data = np.frombuffer(pkt, np.float32, frames * ch, 24).reshape(frames, ch)
-                    try:
-                        sink(data, frames, sr)
-                    except Exception:
-                        pass
-            elif kind == b"GXHI":
-                inst, sr = struct.unpack_from("<II", pkt, 8)
-                txt = pkt[16:].decode("utf-8", "ignore").split("\n")
-                host = txt[0] if txt and txt[0] else "DAW"
-                track = txt[1] if len(txt) > 1 else ""
-                self.info[inst] = (host, track, sr, now)
-                act = self.active if self.recent(1.5) else inst
+            try:
+                self._handle(pkt, addr)
+            except Exception:
+                pass                            # un paquete raro nunca detiene la recepción
+
+    def _handle(self, pkt, addr):
+        if len(pkt) < 16:
+            return
+        kind = pkt[:4]
+        now = time.monotonic()
+        if kind == b"GXLK" and len(pkt) >= 24:
+            ch = pkt[5]
+            inst, seq, sr, frames = struct.unpack_from("<IIII", pkt, 8)
+            if not (1 <= ch <= 2) or frames <= 0 or len(pkt) < 24 + frames * ch * 4:
+                return
+            if self.active is None or (inst != self.active and now - self.audio_t > 1.5):
+                self.active = inst          # la primera pista que envía (o la que quedó)
+            if inst != self.active:
+                return
+            self.audio_t = now
+            self.sr = sr or 48000
+            self.packets += 1
+            sink = self.sink
+            if sink is not None:
+                data = np.frombuffer(pkt, np.float32, frames * ch, 24).reshape(frames, ch)
                 try:
-                    self.sock.sendto(b"GXAK" + struct.pack("<I", act or 0), addr)
-                except OSError:
+                    sink(data, frames, sr)
+                except Exception:
                     pass
-                for k in [k for k, v in self.info.items() if now - v[3] > 10]:
-                    self.info.pop(k, None)
+        elif kind == b"GXHI":
+            inst, sr = struct.unpack_from("<II", pkt, 8)
+            txt = pkt[16:].decode("utf-8", "ignore").split("\n")
+            host = txt[0] if txt and txt[0] else "DAW"
+            track = txt[1] if len(txt) > 1 else ""
+            self.info[inst] = (host, track, sr, now)
+            act = self.active if self.recent(1.5) else inst
+            try:
+                self.sock.sendto(b"GXAK" + struct.pack("<I", act or 0), addr)
+            except OSError:
+                pass
+            for k in [k for k, v in self.info.items() if now - v[3] > 10]:
+                self.info.pop(k, None)
 
 
 class LinkStream:

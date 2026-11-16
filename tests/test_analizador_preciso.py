@@ -227,3 +227,23 @@ def test_link_nan_e_infinitos_no_rompen_los_medidores(link, sender):
         Lo.push(blk[i:i + Lo.n])
     for v in (Lo.momentary(), Lo.short_term(), Lo.integrated(), Lo.tp_max):
         assert not math.isnan(v)
+
+
+@pytest.mark.parametrize("n", [1, 5, 30])
+def test_link_sobrevive_a_plugins_que_se_cierran(link, sender, n):
+    """Un plugin saluda y se cierra enseguida (quitarlo de la pista, cerrar el set): la respuesta
+    rebota y en Windows eso mataba la recepción. Gaux Link debe seguir recibiendo."""
+    import socket
+    for i in range(n):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.sendto(gxhi(300 + i, 48000, "Ableton Live", "Pista"), ("127.0.0.1", G.LINK_PORT))
+        s.close()                                    # se va antes de recibir el GXAK
+    time.sleep(0.3)
+    reset_link(link)
+    e = G.AudioEngine()
+    e.sr = 48000
+    G.LinkStream(e, link)
+    x = sine(440, -6, 256 / 48000, 48000)
+    sender.sendto(gxlk(78, 0, 48000, x), ("127.0.0.1", G.LINK_PORT))
+    assert wait(lambda: e.w >= 256), "Gaux Link dejó de recibir después de los plugins cerrados"
+    assert link.thread.is_alive()
