@@ -450,10 +450,11 @@ def test_cerrar_con_quit_guarda_y_sale(fakes):
     a = App()
     write_conf()
     a.start()
+    time.sleep(3)                               # que el timer termine de abrir antes del DAW
     t0 = total()
     name, exe, title, _, _ = DAWS[0]
     p = fakes.open(name, exe, title)
-    time.sleep(12)
+    time.sleep(14)
     a.quit()                                    # se cierra el timer con el DAW abierto
     fakes.close(p)
     assert not a.alive()
