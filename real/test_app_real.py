@@ -311,15 +311,27 @@ def app():
     a.quit()
 
 
+def mtime():
+    try:
+        return os.path.getmtime(DATA)
+    except OSError:
+        return 0.0
+
+
+def esperar_guardado_al_cerrar(t_close, t=15):
+    """La app guarda cuando nota que el DAW se cerró (lo revisa cada 3 s): se espera ESE
+    guardado (posterior al cierre), no uno automático de mitad de sesión."""
+    wait(lambda: mtime() > t_close + 0.2, t)
+    time.sleep(1.0)
+
+
 def contar_con(fakes, name, exe, title, secs=16):
-    """Abre el DAW al frente 'secs' segundos y lo cierra. Al cerrar el DAW la app guarda."""
+    """Abre el DAW al frente 'secs' segundos y lo cierra. Devuelve los datos antes y después."""
     before = data()
-    t0 = total(before)
     path = fakes.open(name, exe, title)
     time.sleep(secs)
     fakes.close(path)
-    wait(lambda: total() > t0 + 1, 12)
-    time.sleep(1.5)
+    esperar_guardado_al_cerrar(time.time())
     return before, data()
 
 
@@ -348,7 +360,7 @@ def test_sin_daw_no_cuenta(app):
 def test_cuenta_con_cada_daw(app, fakes, name, exe, title, daw, proj):
     before, after = contar_con(fakes, name, exe, title)
     got = total(after) - total(before)
-    assert 8 <= got <= 24, f"{name}: contó {got:.1f} s (estuvo ~18 s al frente)"
+    assert 11 <= got <= 21, f"{name}: contó {got:.1f} s (estuvo ~17 s al frente)"
     # el tiempo cayó en un proyecto, con su DAW
     grown = {k: v["segundos"] - (before.get("proyectos", {}).get(k, {}).get("segundos", 0))
              for k, v in after.get("proyectos", {}).items()}
@@ -399,8 +411,7 @@ def test_daw_abierto_pero_detras_no_cuenta(app, fakes):
     n = fakes.open(*other)                            # otra app pasa al frente
     time.sleep(14)
     fakes.close(d)                                    # se cierra el DAW mientras está detrás
-    wait(lambda: total() > t0 + 1, 12)
-    time.sleep(1.5)
+    esperar_guardado_al_cerrar(time.time())
     fakes.close(n)
     got = total() - t0
     assert 2 <= got <= 12, f"con el DAW detrás siguió contando: sumó {got:.1f} s"
@@ -661,3 +672,43 @@ def test_registro_sin_errores():
         log = f.read()
     assert "Traceback" not in log, log[-3000:]
     write_conf(tema="gaux", vista="completa")
+
+
+# ================================================================== 8. dónde gasta CPU (diagnóstico)
+def test_perfil_cpu_sin_daw():
+    """Corre el mismo código de la app con un perfilador 25 s sin DAW y deja el informe en
+    capturas/perfil_sin_daw.txt (no falla: es para ver qué consume)."""
+    import textwrap
+    os.makedirs(SHOTS, exist_ok=True)
+    out = os.path.join(SHOTS, "perfil_sin_daw.txt")
+    src = os.path.dirname(HERE)
+    code = textwrap.dedent(f"""
+        import cProfile, pstats, io, socket, sys, threading, time, os
+        sys.path.insert(0, {src!r}); sys.argv = ["live_timer.py"]
+        import live_timer as L
+        import psutil
+        me = psutil.Process()
+        def stop():
+            time.sleep(5); c0 = me.cpu_times(); t0 = time.time()
+            time.sleep(25); c1 = me.cpu_times()
+            used = (c1.user - c0.user) + (c1.system - c0.system)
+            open({out!r} + ".cpu", "w").write(f"CPU (con perfilador) {{100 * used / (time.time() - t0):.1f}} %\\n")
+            s = socket.create_connection(("127.0.0.1", 47653)); s.sendall(b"QUIT"); s.close()
+        threading.Thread(target=stop, daemon=True).start()
+        pr = cProfile.Profile(); pr.enable()
+        try:
+            L.main()
+        except SystemExit:
+            pass
+        pr.disable()
+        b = io.StringIO(); pstats.Stats(pr, stream=b).sort_stats("tottime").print_stats(30)
+        b2 = io.StringIO(); pstats.Stats(pr, stream=b2).sort_stats("cumulative").print_stats(30)
+        open({out!r}, "w").write(b.getvalue() + "\\n\\n" + b2.getvalue())
+    """)
+    for p in psutil.process_iter(["exe"]):
+        if _is(p, APP_EXE):
+            p.kill()
+    write_conf()
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
+    print(r.stdout[-2000:], r.stderr[-3000:])
+    assert os.path.exists(out)
