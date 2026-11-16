@@ -903,11 +903,27 @@ elif SYSTEM == "Darwin":
                    b"orderWindow:relativeTo:", b"setHidesOnDeactivate:",
                    b"_setPreventsActivation:", b"respondsToSelector:",
                    b"activateIgnoringOtherApps:", b"runningApplicationWithProcessIdentifier:",
-                   b"activateWithOptions:", b"setCanHide:"):
+                   b"activateWithOptions:", b"setCanHide:", b"isActive", b"deactivate"):
             _SEL[_k] = _objc.sel_registerName(_k)
         _LEVEL_OK = bool(_NSApp_cls) and _SCREENS_OK
     except Exception:
         _LEVEL_OK = False
+
+    def mac_yield_focus():
+        """Si el timer quedó como app activa sin nada que mostrar (p. ej. al abrirlo desde
+        Aplicaciones), le devuelve el foco a la app anterior: en Mac, una app Tk activa sin
+        ventanas gastaba ~15 % de CPU sin hacer nada."""
+        if not _LEVEL_OK:
+            return False
+        try:
+            with _Pool():
+                app = _send_p(_NSApp_cls, _SEL[b"sharedApplication"])
+                if app and _send_b(app, _SEL[b"isActive"]):
+                    _send_p(app, _SEL[b"deactivate"])
+                    return True
+        except Exception:
+            pass
+        return False
     FLOAT_LEVEL = 3              # NSFloatingWindowLevel: el mismo de los plugins
     NO_ACTIVATE = [None]         # ¿macOS deja que una ventana no active la app?
 
@@ -1122,6 +1138,9 @@ if SYSTEM != "Darwin":
 
     def activate_pid(pid):
         pass
+
+    def mac_yield_focus():
+        return False
 
 if SYSTEM not in ("Darwin", "Windows"):
     def stack_windows(tkwins, owner_pid=None):
@@ -3069,8 +3088,21 @@ class GauxTimer:
             self.set_visible((self.last_front_live or self._settings_open()) and not self.ui_busy)
         else:
             self.set_visible(False)
+            if SYSTEM == "Darwin" and not self._any_window_open():
+                mac_yield_focus()
         if reschedule:
-            self.root.after(400, self.watch_front)
+            # sin DAW abierto no hay nada que vigilar tan seguido: menos despertares, menos CPU
+            self.root.after(400 if self.live_open else 1000, self.watch_front)
+
+    def _any_window_open(self):
+        """¿Hay alguna ventana del timer a la vista (Ajustes, Proyectos, bienvenida, GG…)?"""
+        try:
+            for w in self.root.winfo_children():
+                if isinstance(w, tk.Toplevel) and w.winfo_exists() and w.winfo_viewable():
+                    return True
+        except tk.TclError:
+            return True
+        return False
 
     def raise_timer(self):
         """El timer queda sobre el analizador; los dos, debajo de los plugins del DAW."""

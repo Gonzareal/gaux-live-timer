@@ -735,8 +735,8 @@ def test_cpu_sin_daw_tras_la_bienvenida():
         a.quit()
 
 
-def test_cpu_diagnostico_app_al_frente():
-    """Diagnóstico (no falla): CPU del timer sin DAW con el timer como app activa y con otra
+def test_cpu_recien_abierto_y_con_otra_app():
+    """CPU del timer sin DAW con el timer como app activa y con otra
     app (Finder / Explorador) al frente, que es lo normal mientras produces."""
     write_conf(bienvenida_vista=True)
     a = App().start()
@@ -749,9 +749,10 @@ def test_cpu_diagnostico_app_al_frente():
             subprocess.Popen(["explorer.exe"])
         time.sleep(4)
         otra = _cpu_de(a.proc.pid, 15)
-        print(f"CPU sin DAW: timer activo {al_frente:.1f} %  ·  otra app al frente {otra:.1f} %")
+        print(f"CPU sin DAW: recién abierto {al_frente:.1f} %  ·  otra app al frente {otra:.1f} %")
         if max(al_frente, otra) >= 6:
             _perfil(a.proc.pid)
+        assert al_frente < 6 and otra < 6, (al_frente, otra)
     finally:
         a.quit()
 
