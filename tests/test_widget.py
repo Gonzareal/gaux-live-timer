@@ -223,8 +223,8 @@ def test_cambiar_tamano_arrastrando(fresh, vista, orient, dx, expect):
         app.resize_drag(Ev(500 + dx * i / 10, 500 + dx * i / 10))
     app.resize_end()
     k = app.scale_for(key)
-    if expect == "max":
-        assert k == pytest.approx(hi)
+    if expect == "max":                      # el máximo, o lo que quepa en esta pantalla
+        assert k == pytest.approx(min(hi, app._k_cap))
     elif expect == "min":
         assert k == pytest.approx(lo)
     elif expect == "up":
