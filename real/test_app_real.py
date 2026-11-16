@@ -642,10 +642,16 @@ def _cpu(proc, secs):
 def _perfil(pid):
     """Dónde gasta CPU la app (para el registro de la prueba)."""
     if MAC:
+        p = psutil.Process(pid)
+        c0 = p.cpu_times()
+        time.sleep(5)
+        c1 = p.cpu_times()
+        print(f"usuario {(c1.user - c0.user) * 20:.1f} %  sistema {(c1.system - c0.system) * 20:.1f} %")
         out = subprocess.run(["sample", str(pid), "4", "-mayDie"], capture_output=True,
                              text=True).stdout
-        i = out.find("Sort by top of stack")
-        print(out[i:i + 2500] if i >= 0 else out[-2500:])
+        i = out.find("Call graph:")
+        j = out.find("Total number in stack")
+        print(out[i:j if j > i else i + 9000][:9000])
     try:
         th = sorted(psutil.Process(pid).threads(), key=lambda t: -(t.user_time + t.system_time))
         print("hilos:", [(t.id, round(t.user_time + t.system_time, 2)) for t in th[:6]])
@@ -725,6 +731,27 @@ def test_cpu_sin_daw_tras_la_bienvenida():
         cpu = _cpu_de(a.proc.pid, 20)
         print(f"CPU sin DAW (bienvenida ya vista): {cpu:.1f} %")
         assert cpu < 6, cpu
+    finally:
+        a.quit()
+
+
+def test_cpu_diagnostico_app_al_frente():
+    """Diagnóstico (no falla): CPU del timer sin DAW con el timer como app activa y con otra
+    app (Finder / Explorador) al frente, que es lo normal mientras produces."""
+    write_conf(bienvenida_vista=True)
+    a = App().start()
+    try:
+        time.sleep(10)
+        al_frente = _cpu_de(a.proc.pid, 15)
+        if MAC:
+            subprocess.run(["open", "-a", "Finder"])
+        else:
+            subprocess.Popen(["explorer.exe"])
+        time.sleep(4)
+        otra = _cpu_de(a.proc.pid, 15)
+        print(f"CPU sin DAW: timer activo {al_frente:.1f} %  ·  otra app al frente {otra:.1f} %")
+        if max(al_frente, otra) >= 6:
+            _perfil(a.proc.pid)
     finally:
         a.quit()
 
