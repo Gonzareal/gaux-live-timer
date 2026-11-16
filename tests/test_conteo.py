@@ -367,9 +367,9 @@ def test_valores_por_periodo(fresh):
     monday = d - dt.timedelta(days=d.weekday())
     app.data["proyectos"]["P"] = {"segundos": 1000, "sesiones": 3, "creado": None,
                                   "ultima": None, "daw": "Ableton Live",
-                                  "dias": {d.isoformat(): 100,
-                                           monday.isoformat(): 200 if monday != d else 0,
-                                           "2000-01-01": 700}}
+                                  "dias": {d.isoformat(): 100, "2000-01-01": 700}}
+    if monday != d:                       # los lunes, el lunes es hoy (no se pisa el valor)
+        app.data["proyectos"]["P"]["dias"][monday.isoformat()] = 200
     v = app.project_values("P")
     assert v["total"] == 1000 and v["hoy"] == 100
     assert v["semana"] == pytest.approx(100 + (200 if monday != d else 0))
