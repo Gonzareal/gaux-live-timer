@@ -568,8 +568,9 @@ elif SYSTEM == "Darwin":
                         LIVE_PID[0] = pid
                         return "live"
                     return "other"
-            except Exception:
+            except Exception as e:
                 _OBJC_OK = False                   # respaldo: lsappinfo
+                print(f"aviso: app al frente por lsappinfo (objc falló: {e!r})")
         asn = _run(["lsappinfo", "front"]).strip()
         if not asn:
             return "other"
@@ -1071,8 +1072,9 @@ elif SYSTEM == "Darwin":
         if _SCREENS_OK:
             try:
                 return _running_daw_objc()
-            except Exception:
+            except Exception as e:
                 _SCREENS_OK = False                # respaldo: ps
+                print(f"aviso: DAWs abiertos por ps (objc falló: {e!r})")
         out = _run(["ps", "-axo", "comm="])
         for line in out.splitlines():
             if ".app/Contents/MacOS/" in line and daw_match(line):
@@ -5596,7 +5598,10 @@ def _setup_log():
         return
     sys.stdout = sys.stderr = log
     print(f"--- {APP_NAME} {VERSION} · {dt.datetime.now():%Y-%m-%d %H:%M} · "
-          f"{platform.platform()}")
+          f"{platform.platform()} · pid {os.getpid()}")
+    if SYSTEM == "Darwin":
+        print(f"nativo: objc={_OBJC_OK} pantallas={_SCREENS_OK} "
+              f"ax={globals().get('_AX_OK')} ct={globals().get('_CT_OK')}")
 
     def hook(t, v, tb):
         traceback.print_exception(t, v, tb)

@@ -77,7 +77,9 @@ jobs:
 
       - name: Perfil de CPU sin DAW (diagnóstico)
         if: always()
-        run: cat real/capturas/perfil_sin_daw.txt.cpu real/capturas/perfil_sin_daw.txt 2>/dev/null | head -120 || true
+        run: |
+          cat real/capturas/perfil_sin_daw.txt.cpu real/capturas/perfil_sin_daw.txt 2>/dev/null | head -120 || true
+          echo "===== registro de la app ====="; tail -n 80 ~/.live_timer/registro.txt || true
 
       - name: Resumen de las pruebas reales
         if: always()
@@ -192,6 +194,8 @@ jobs:
           $rc = $LASTEXITCODE
           Write-Output "===== perfil sin DAW ====="
           Get-Content real/capturas/perfil_sin_daw.txt.cpu, real/capturas/perfil_sin_daw.txt -ErrorAction SilentlyContinue | Select-Object -First 120
+          Write-Output "===== registro de la app ====="
+          Get-Content "$env:USERPROFILE\.live_timer\registro.txt" -Tail 80 -ErrorAction SilentlyContinue
           if ($rc) { exit 1 }
 
       - name: Resumen de las pruebas reales

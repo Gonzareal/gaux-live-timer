@@ -233,6 +233,21 @@ def new_log(since):
 ARRANQUES = []
 
 
+def holder(port=LOCK_PORT):
+    """Quién tiene tomado el puerto del timer (para entender un cierre que no soltó)."""
+    out = []
+    for p in psutil.process_iter(["pid", "name", "exe", "ppid", "create_time", "status"]):
+        try:
+            for c in p.net_connections(kind="tcp"):
+                if c.laddr and c.laddr.port == port and c.status == psutil.CONN_LISTEN:
+                    i = p.info
+                    out.append(f"pid {i['pid']} {i['name']} ({i['exe']}) padre {i['ppid']} "
+                               f"estado {i['status']} hace {time.time() - i['create_time']:.0f} s")
+        except (psutil.Error, OSError):
+            continue
+    return out or ["nadie"]
+
+
 class App:
     def __init__(self):
         self.proc = None
@@ -246,6 +261,7 @@ class App:
         ARRANQUES.append(took)
         if not ok:
             raise AssertionError(f"la app no abrió en 45 s (¿sigue viva? {self.alive()}); "
+                                 f"puerto tomado por: {holder()}; "
                                  f"registro: {new_log(max(0, log_size() - 1500))}")
         time.sleep(2.0)
         assert self.alive(), "la app se cerró sola al abrir"
@@ -266,8 +282,11 @@ class App:
         try:
             self.proc.wait(t)
         except subprocess.TimeoutExpired:
+            info = holder()
             self.proc.kill()
-            raise AssertionError("la app no se cerró con QUIT")
+            raise AssertionError(f"la app no se cerró con QUIT; puerto: {info}")
+        if not wait(lambda: not port_open(), 8):
+            raise AssertionError(f"la app salió pero el puerto sigue tomado por: {holder()}")
 
     def kill(self):
         if self.alive():
