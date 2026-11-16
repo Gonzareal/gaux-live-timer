@@ -606,7 +606,7 @@ def test_analizador_abierto_sigue_contando(con_analizador):
 # ================================================================== 6. rendimiento real
 @pytest.fixture(scope="module")
 def medida(fakes):
-    write_conf()
+    write_conf(bienvenida_vista=False)          # primera vez: la bienvenida queda abierta
     a = App().start()
     yield a
     a.quit()
@@ -650,6 +650,48 @@ def _idle_tk_cpu():
         return _cpu_de(q.pid, 20)
     finally:
         q.kill()
+
+
+def _tk_script_cpu(code):
+    q = subprocess.Popen([sys.executable, "-c", code])
+    try:
+        time.sleep(6)
+        return _cpu_de(q.pid, 15)
+    finally:
+        q.kill()
+
+
+def test_cpu_diagnostico_ventanas_tk():
+    """Diagnóstico (no falla): cuánto gasta en esta máquina cada tipo de ventana Tk quieta."""
+    base = "import tkinter as t; r=t.Tk(); r.withdraw(); "
+    casos = {
+        "Tk oculta": base + "r.mainloop()",
+        "ventana normal": base + "w=t.Toplevel(r); t.Label(w,text='hola').pack(); r.mainloop()",
+        "sin bordes + encima": base + "w=t.Toplevel(r); w.overrideredirect(True); "
+                               "w.attributes('-topmost', True); t.Label(w,text='hola').pack(); "
+                               "r.mainloop()",
+        "sin bordes + encima + mano": base + "w=t.Toplevel(r); w.overrideredirect(True); "
+                                      "w.attributes('-topmost', True); "
+                                      "t.Label(w,text='hola',cursor='hand2').pack(); r.mainloop()",
+        "after cada 250 ms": base + "f=lambda: r.after(250, f); f(); r.mainloop()",
+        "after cada 400 ms + 1 s": base + "f=lambda: r.after(400, f); g=lambda: r.after(1000, g); "
+                                   "f(); g(); r.mainloop()",
+    }
+    for k, code in casos.items():
+        print(f"CPU {k}: {_tk_script_cpu(code):.1f} %")
+
+
+def test_cpu_sin_daw_tras_la_bienvenida():
+    """Como lo usa la gente: la bienvenida ya se vio una vez (el aviso corto se cierra solo)."""
+    write_conf(bienvenida_vista=True)
+    a = App().start()
+    try:
+        time.sleep(10)                         # el aviso "está activo" se cierra a los 7 s
+        cpu = _cpu_de(a.proc.pid, 20)
+        print(f"CPU sin DAW (bienvenida ya vista): {cpu:.1f} %")
+        assert cpu < 6, cpu
+    finally:
+        a.quit()
 
 
 def test_cpu_sin_daw_es_minima(medida):

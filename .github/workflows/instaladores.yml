@@ -73,7 +73,7 @@ jobs:
         run: |
           set -o pipefail
           $PYTHON -m pip install --quiet pytest psutil
-          $PYTHON -m pytest real -v -p no:cacheprovider -rfE --junitxml=reales.xml 2>&1 | tee reales.log
+          $PYTHON -m pytest real -v -s -p no:cacheprovider -rfE --junitxml=reales.xml 2>&1 | tee reales.log
 
       - name: Perfil de CPU sin DAW (diagnóstico)
         if: always()
@@ -190,7 +190,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --quiet pytest psutil pillow
-          python -m pytest real -v -p no:cacheprovider -rfE --junitxml=reales.xml 2>&1 | Tee-Object -FilePath reales.log
+          python -m pytest real -v -s -p no:cacheprovider -rfE --junitxml=reales.xml 2>&1 | Tee-Object -FilePath reales.log
           $rc = $LASTEXITCODE
           Write-Output "===== perfil sin DAW ====="
           Get-Content real/capturas/perfil_sin_daw.txt.cpu, real/capturas/perfil_sin_daw.txt -ErrorAction SilentlyContinue | Select-Object -First 120
