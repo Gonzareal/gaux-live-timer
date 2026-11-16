@@ -68,6 +68,7 @@ DEFAULT_CONF = {
     "tema": "noche",
     "opacidad": 0.95,
     "animaciones": True,
+    "fps_timer": "auto",            # auto (sigue la Fluidez) | 60 | 30 | 15
     "vista": "completa",            # completa | compacta | mini
     "vista_previa": "completa",
     "orientacion": "horizontal",    # horizontal | vertical
@@ -1416,7 +1417,8 @@ def _fix_types(val, default):
 
 
 _ENUMS = {"vista": ("completa", "compacta", "mini"), "vista_previa": ("completa", "compacta"),
-          "orientacion": ("horizontal", "vertical"), "modo": ("normal", "autonomo")}
+          "orientacion": ("horizontal", "vertical"), "modo": ("normal", "autonomo"),
+          "fps_timer": ("auto", "60", "30", "15")}
 _RANGES = {("opacidad",): (0.3, 1.0), ("limite_inactividad",): (30, 24 * 3600),
            ("top_escala",): (50, 100), ("autonomo", "trabajo_min"): (1, 600),
            ("autonomo", "break_min"): (1, 240), ("autonomo", "max_diario_h"): (0, 24),
@@ -3443,6 +3445,9 @@ class GauxTimer:
     def anim_fps(self):
         """Fluidez del timer: 120 fps solo en el modo 120; en Equilibrado y 60 fps, 60
         (el reloj cambia una vez por segundo: más cuadros solo gastan CPU)."""
+        elegido = self.conf.get("fps_timer", "auto")
+        if elegido in ("60", "30", "15"):           # el usuario eligió menos cuadros: menos CPU
+            return int(elegido)
         return 120 if self.conf["analizador"].get("rendimiento") == "maximo" else 60
 
     def anim(self):
@@ -5159,6 +5164,12 @@ class Ajustes(tk.Toplevel):
         r = self.line(pg, "Fluidez", width=16)
         self.chips(r, [("maximo", "120 fps"), ("equilibrado", "Equilibrado"),
                        ("ahorro", "60 fps")], ("analizador", "rendimiento"))
+        r = self.line(pg, "Cuadros del timer", width=16)
+        self.chips(r, [("auto", "Auto"), ("60", "60 fps"), ("30", "30 fps"), ("15", "15 fps")],
+                   ("fps_timer",))
+        self.note(pg, "Auto sigue la Fluidez (60 fps, o 120 en el modo 120). Con menos cuadros "
+                      "las animaciones se ven menos suaves pero el timer usa menos CPU; el reloj "
+                      "y el conteo son iguales.")
         self.font_rows = []
         r = self.line(pg, "Letra del título", width=16)
         self.font_rows.append(self.fontmenu(r, TITLE_FONTS, "fuente_titulo",

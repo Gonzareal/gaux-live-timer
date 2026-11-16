@@ -743,6 +743,23 @@ def test_cpu_contando_sin_animaciones(fakes):
         write_conf(animaciones=True)
 
 
+@pytest.mark.parametrize("fps", ["30", "15"])
+def test_cpu_contando_con_menos_cuadros(fakes, fps):
+    """Elegir menos cuadros por segundo en Ajustes baja la CPU mientras cuenta."""
+    write_conf(bienvenida_vista=True, animaciones=True, fps_timer=fps)
+    a = App().start()
+    name, exe, title, _, _ = DAWS[0]
+    p = fakes.open(name, exe, title)
+    try:
+        time.sleep(5)
+        print(f"CPU contando a {fps} fps: {_cpu_de(a.proc.pid, 20):.1f} %")
+        assert a.alive()
+    finally:
+        fakes.close(p)
+        a.quit()
+        write_conf(fps_timer="auto")
+
+
 def test_cpu_con_la_bienvenida_abierta():
     """La primera vez la bienvenida queda abierta hasta que tocas Listo: no debe gastar CPU."""
     write_conf(bienvenida_vista=False)
