@@ -934,3 +934,30 @@ def test_arranca_rapido():
     print("arranques (s):", [round(x, 1) for x in ARRANQUES])
     med = sorted(ARRANQUES)[len(ARRANQUES) // 2]
     assert med < 12, f"la mitad de los arranques tardó más de {med:.1f} s"
+
+
+# ================================================================== 9. Top Live: Accesibilidad directa
+@pytest.mark.skipif(not MAC, reason="solo en Mac")
+def test_top_live_mueve_la_ventana_con_accesibilidad(fakes):
+    """El chequeo del permiso funciona en un Mac real y, si la máquina lo permite, Top Live
+    mueve y redimensiona la ventana de un DAW sin osascript."""
+    sys.path.insert(0, os.path.dirname(HERE))
+    import live_timer as L
+    t = L.mac_ax_trusted()
+    assert t in (True, False), "el chequeo del permiso de Accesibilidad responde"
+    name, exe, title, _, _ = DAWS[0]
+    path = fakes.open(name, exe, title)
+    try:
+        pid = next(p.pid for p in psutil.process_iter(["exe", "name", "cmdline"]) if _is(p, path))
+        if not t:
+            pytest.skip("esta Mac de pruebas no le da Accesibilidad a Python")
+        wins = L.ax_live_windows(pid)
+        assert wins, "lee las ventanas del DAW"
+        n = max(wins, key=lambda w: w[3] * w[4])[0]
+        L.ax_set_live_window(pid, n, 120, 160, 760, 480)
+        time.sleep(0.6)
+        _, x, y, w, h = [v for v in L.ax_live_windows(pid) if v[0] == n][0]
+        print(f"ventana movida a {x},{y} {w}x{h}")
+        assert abs(x - 120) <= 4 and abs(y - 160) <= 4 and abs(w - 760) <= 4 and abs(h - 480) <= 4
+    finally:
+        fakes.close(path)

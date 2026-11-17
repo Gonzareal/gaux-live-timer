@@ -725,6 +725,30 @@ class AnalyzerPanel:
             self.loud.reset()
 
     # ---- construcción ----------------------------------------------------------
+    LUFS_W = 214
+
+    def active_modules(self, H=None):
+        H = self.conf.get("h", 172) if H is None else H
+        ch = int(H) - 2 * self.PAD
+        mods = [k for k, _ in MODULES if self.conf["modulos"].get(k, True)]
+        if ch < 60:                 # franja muy baja (junto a la cámara): sin vectorscopio
+            mods = [k for k in mods if k != "stereo"] or mods
+        return mods
+
+    @staticmethod
+    def compact_stereo(ch):
+        return int(max(60, min(ch, 160)))
+
+    def compact_width(self, H):
+        """Ancho justo para Loudness y/o Stereo solos (sin onda ni espectro que estirar).
+        None si hay algún módulo que sí ocupa el ancho que le des."""
+        mods = self.active_modules(H)
+        if not mods or any(k in ("wave", "spec") for k in mods):
+            return None
+        ch = int(H) - 2 * self.PAD
+        widths = [self.LUFS_W if k == "lufs" else self.compact_stereo(ch) for k in mods]
+        return int(2 * self.PAD + sum(widths) + self.GAP * (len(widths) - 1))
+
     def build(self):
         T, cv, c = self.app.T, self.cv, self.conf
         cv.delete("all")
@@ -733,6 +757,10 @@ class AnalyzerPanel:
         self.st_clean = False
         self.T = T
         W, H = int(c.get("w", 900)), int(c.get("h", 172))
+        nat = None if self.docked() else self.compact_width(H)
+        if nat:
+            W = nat                  # solo Loudness y/o Stereo: el panel se ajusta a lo que muestra
+        self.compact = bool(nat)
         self.W, self.H = W, H
         base = self.app.clear or T["bg"]
         cv.config(width=W, height=H, bg=base)
@@ -768,10 +796,10 @@ class AnalyzerPanel:
         self.clockf = self.app.f_clock_family
         self.dim = T["dim"]
 
-        mods = [k for k, _ in MODULES if c["modulos"].get(k, True)]
-        if ch < 60:                 # franja muy baja (junto a la cámara): sin vectorscopio
-            mods = [k for k in mods if k != "stereo"] or mods
-        fixed = {"stereo": int(min(ch, max(118, cw * 0.15))), "lufs": 214}
+        mods = self.active_modules(H)
+        fixed = {"stereo": int(min(ch, max(118, cw * 0.15))), "lufs": self.LUFS_W}
+        if self.compact:
+            fixed["stereo"] = self.compact_stereo(ch)
         flex = [k for k in mods if k not in fixed]
         free = cw - sum(fixed[k] for k in mods if k in fixed) - G * (len(mods) - 1)
         share = {"wave": 0.42, "spec": 0.58}
@@ -1583,11 +1611,16 @@ class AnalyzerPanel:
             sw = self.win.winfo_screenwidth()
             w = int(round(max(460, min(sw, w0 + e.x_root - x0))))
             h = int(round(max(120, min(420, h0 + e.y_root - y0))))
+            nat = self.compact_width(h)
+            if nat:                          # solo Loudness/Stereo: el ancho lo pone el contenido
+                w = nat
             self.win.geometry(f"{w}x{h}")
             now = time.monotonic()
             if now - self._last_build > 0.12:
                 self._last_build = now
-                self.conf["w"], self.conf["h"] = w, h
+                if not nat:
+                    self.conf["w"] = w
+                self.conf["h"] = h
                 self.build()
         elif self._drag:
             self.win.geometry(f"+{int(e.x_root - self._drag[0])}+{int(e.y_root - self._drag[1])}")
@@ -1598,7 +1631,9 @@ class AnalyzerPanel:
         if self.docked():
             return
         if self._resize:
-            c["w"], c["h"] = self.win.winfo_width(), self.win.winfo_height()
+            if not self.compact_width(self.win.winfo_height()):
+                c["w"] = self.win.winfo_width()      # el ancho ancho se recuerda para después
+            c["h"] = self.win.winfo_height()
             self.build()
         c["x"], c["y"] = self.win.winfo_x(), self.win.winfo_y()
         self._drag = self._resize = None

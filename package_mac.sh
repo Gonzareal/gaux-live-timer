@@ -30,12 +30,17 @@ VST3="$OUT/VST3/Gaux Link.vst3"
 AU="$OUT/AU/Gaux Link.component"
 for p in "$APP" "$VST3" "$AU"; do [ -e "$p" ] || { echo "ERROR: no se generó $p"; exit 1; }; done
 
-# 3) Firma local (ad-hoc): obligatoria para que el código arm64 cargue
+# 3) Firma: obligatoria para que el código arm64 cargue. Con un certificado propio y fijo
+#    (MAC_SIGN_IDENTITY) macOS reconoce cada versión nueva como la misma app y los permisos
+#    (Accesibilidad para Top Live, Micrófono) no se pierden al actualizar. Sin él: ad-hoc.
+SIGN_ID="${MAC_SIGN_IDENTITY:--}"
+echo "Firma: ${SIGN_ID}"
 for p in "$VST3" "$AU" "$APP"; do
     xattr -cr "$p" 2>/dev/null || true
-    codesign --force --deep --sign - "$p"
+    codesign --force --deep --sign "$SIGN_ID" "$p"
     codesign --verify --deep "$p"
 done
+codesign -d -r- "$APP" 2>&1 | tail -1
 
 # 4) Un paquete por componente (cada uno a su carpeta del sistema)
 rm -rf "$WORK"; mkdir -p "$WORK"

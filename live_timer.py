@@ -46,6 +46,7 @@ FROZEN = bool(getattr(sys, "frozen", False))
 # A quién le da macOS los permisos (Micrófono, Accesibilidad, Grabación de pantalla)
 HOST_APP = APP_NAME if FROZEN else ("Terminal" if SYSTEM == "Darwin" else "Python")
 AT_LOGIN = "--login" in sys.argv     # lo abrió el arranque automático al iniciar sesión
+INSTALLED = "--instalado" in sys.argv  # lo abrió el instalador al terminar
 DEMO = "--demo" in sys.argv
 SPEED = 60.0 if "--rapido" in sys.argv else 1.0
 APP_DIR = os.path.join(os.path.expanduser("~"), ".live_timer")
@@ -704,6 +705,127 @@ elif SYSTEM == "Darwin":
             _CF.CFRelease(app)
         return menu, dialog
 
+    # ---- permiso de Accesibilidad y ventanas del DAW, directo (sin "System Events") ----
+    try:
+        _AX.AXIsProcessTrusted.restype = ctypes.c_bool
+        _AX.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+        _AX.AXIsProcessTrustedWithOptions.argtypes = [_vp]
+        _AX.AXUIElementSetAttributeValue.restype = ctypes.c_int32
+        _AX.AXUIElementSetAttributeValue.argtypes = [_vp, _vp, _vp]
+        _AX.AXValueCreate.restype = _vp
+        _AX.AXValueCreate.argtypes = [ctypes.c_int, _vp]
+        _AX.AXValueGetValue.restype = ctypes.c_bool
+        _AX.AXValueGetValue.argtypes = [_vp, ctypes.c_int, _vp]
+        _CF.CFDictionaryCreate.restype = _vp
+        _CF.CFDictionaryCreate.argtypes = [_vp, _vp, _vp, ctypes.c_long, _vp, _vp]
+        _CF.CFRetain.restype = _vp
+        _CF.CFRetain.argtypes = [_vp]
+
+        class _CGXY(ctypes.Structure):
+            _fields_ = [("a", ctypes.c_double), ("b", ctypes.c_double)]
+        _AXWIN_OK = _AX_OK
+    except Exception:
+        _AXWIN_OK = False
+
+    def mac_ax_trusted(prompt=False):
+        """¿macOS le dio a este programa el permiso de Accesibilidad? (None: no se sabe.)
+        Con prompt=True y sin permiso, macOS muestra su propio aviso con el botón para abrir
+        los Ajustes y agrega el timer a la lista de Accesibilidad: solo queda activarlo."""
+        if not _AXWIN_OK:
+            return None
+        try:
+            if not prompt:
+                return bool(_AX.AXIsProcessTrusted())
+            key = _vp.in_dll(_AX, "kAXTrustedCheckOptionPrompt")
+            yes = _vp.in_dll(_CF, "kCFBooleanTrue")
+            keys = (_vp * 1)(key.value)
+            vals = (_vp * 1)(yes.value)
+            kcb = ctypes.addressof(ctypes.c_char.in_dll(_CF, "kCFTypeDictionaryKeyCallBacks"))
+            vcb = ctypes.addressof(ctypes.c_char.in_dll(_CF, "kCFTypeDictionaryValueCallBacks"))
+            d = _CF.CFDictionaryCreate(None, keys, vals, 1, kcb, vcb)
+            try:
+                return bool(_AX.AXIsProcessTrustedWithOptions(d))
+            finally:
+                _CF.CFRelease(d)
+        except Exception:
+            return None
+
+    def _ax_windows(pid):
+        """[(elemento, x, y, ancho, alto)] de las ventanas del DAW (por Accesibilidad)."""
+        app = _AX.AXUIElementCreateApplication(int(pid))
+        if not app:
+            raise OSError("sin app")
+        out = []
+        try:
+            _AX.AXUIElementSetMessagingTimeout(app, 1.0)
+            arr = _vp()
+            err = _AX.AXUIElementCopyAttributeValue(app, _cfs("AXWindows"), ctypes.byref(arr))
+            if err == -25211:                                   # kAXErrorAPIDisabled
+                raise PermissionError("sin permiso de Accesibilidad")
+            if err != 0 or not arr.value:
+                raise OSError(f"AXWindows {err}")
+            try:
+                for i in range(_CF.CFArrayGetCount(arr.value)):
+                    el = _CF.CFArrayGetValueAtIndex(arr.value, i)
+                    pt, sz = _CGXY(), _CGXY()
+                    vp = _ax_get(el, "AXPosition")
+                    vs = _ax_get(el, "AXSize")
+                    ok = bool(vp and vs and _AX.AXValueGetValue(vp, 1, ctypes.byref(pt))
+                              and _AX.AXValueGetValue(vs, 2, ctypes.byref(sz)))
+                    for v in (vp, vs):
+                        if v:
+                            _CF.CFRelease(v)
+                    if ok:
+                        out.append((_CF.CFRetain(el), int(pt.a), int(pt.b), int(sz.a), int(sz.b)))
+            finally:
+                _CF.CFRelease(arr.value)
+        finally:
+            _CF.CFRelease(app)
+        return out
+
+    def _ax_set_xy(el, attr, kind, a, b):
+        v = _AX.AXValueCreate(kind, ctypes.byref(_CGXY(float(a), float(b))))
+        try:
+            return _AX.AXUIElementSetAttributeValue(el, _cfs(attr), v)
+        finally:
+            _CF.CFRelease(v)
+
+    def ax_live_windows(pid):
+        """Como live_main_window pero sin osascript: [(n, x, y, ancho, alto)], n desde 1."""
+        wins = _ax_windows(pid)
+        try:
+            return [(i + 1, x, y, w, h) for i, (_, x, y, w, h) in enumerate(wins)]
+        finally:
+            for el, *_ in wins:
+                _CF.CFRelease(el)
+
+    def ax_set_live_window(pid, n, x, y, w, h):
+        wins = _ax_windows(pid)
+        try:
+            el = wins[n - 1][0]
+            _ax_set_xy(el, "AXSize", 2, w, h)
+            _ax_set_xy(el, "AXPosition", 1, x, y)
+            err = _ax_set_xy(el, "AXSize", 2, w, h)
+            if err not in (0,):
+                raise OSError(f"AXSize {err}")
+        finally:
+            for el, *_ in wins:
+                _CF.CFRelease(el)
+
+    def ax_live_fullscreen(pid, n, value=None):
+        """Lee (value=None) o cambia la pantalla completa de la ventana n del DAW."""
+        wins = _ax_windows(pid)
+        try:
+            el = wins[n - 1][0]
+            if value is None:
+                return bool(_ax_value(el, "AXFullScreen"))
+            b = _vp.in_dll(_CF, "kCFBooleanTrue" if value else "kCFBooleanFalse")
+            _AX.AXUIElementSetAttributeValue(el, _cfs("AXFullScreen"), b.value)
+            return value
+        finally:
+            for el, *_ in wins:
+                _CF.CFRelease(el)
+
     # Título de la ventana principal del DAW, para detectar el proyecto. Se lee del servidor
     # de ventanas de macOS (como hace el Monitor de Actividad), nunca del DAW: no lo interrumpe.
     try:
@@ -1149,6 +1271,9 @@ if SYSTEM != "Darwin":
     def mac_yield_focus():
         return False
 
+    def mac_ax_trusted(prompt=False):
+        return None
+
 if SYSTEM not in ("Darwin", "Windows"):
     def stack_windows(tkwins, owner_pid=None):
         return False
@@ -1223,11 +1348,44 @@ class LiveWindowError(Exception):
     """Mensaje listo para mostrar al usuario."""
 
 
-PERMISO_MAC = ("Para mover la ventana de tu DAW, macOS necesita un permiso:\n\n"
-               "Ajustes del Sistema → Privacidad y seguridad → Accesibilidad → activa "
-               f"{HOST_APP}.\n"
-               f"Si aparece un aviso de \"{HOST_APP} quiere controlar System Events\", "
-               "dale Permitir.\n\nLuego activa el modo otra vez.")
+PERMISO_MAC = ("Top Live mueve la ventana de tu DAW, y macOS solo deja hacerlo con el permiso "
+               "de Accesibilidad (se da una sola vez):\n\n"
+               "1.  Toca «Abrir Accesibilidad».\n"
+               f"2.  En la lista, activa el interruptor de «{HOST_APP}». Si no aparece, toca + "
+               f"y elígelo en Aplicaciones.\n"
+               "3.  Vuelve aquí y toca «Probar de nuevo».\n\n"
+               "Si ya estaba activado y aun así no funciona (pasa después de actualizar el "
+               "timer), selecciónalo, quítalo con el botón − y actívalo de nuevo.")
+AX_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
+
+def open_accessibility_settings():
+    """Abre directo Ajustes del Sistema → Privacidad y seguridad → Accesibilidad."""
+    if SYSTEM == "Darwin":
+        mac_ax_trusted(prompt=True)          # agrega el timer a la lista (y el aviso de macOS)
+        try:
+            subprocess.Popen(["open", AX_SETTINGS_URL])
+        except OSError:
+            pass
+
+
+_NO = object()
+
+
+def _ax_try(fn):
+    """En Mac: mover/leer la ventana del DAW con Accesibilidad directa (sin osascript ni el
+    permiso extra de 'controlar System Events'). Si eso no sirve, se usa el método anterior."""
+    pid = LIVE_PID[0]
+    if SYSTEM != "Darwin" or not pid or not globals().get("_AXWIN_OK"):
+        return _NO
+    if mac_ax_trusted() is False:
+        raise LiveWindowError(PERMISO_MAC)
+    try:
+        return fn(pid)
+    except PermissionError:
+        raise LiveWindowError(PERMISO_MAC)
+    except Exception:
+        return _NO
 
 
 def _proc():
@@ -1250,6 +1408,11 @@ def _osa(script):
 def live_main_window():
     """Devuelve (id, x, y, ancho, alto) de la ventana más grande de Live."""
     if SYSTEM == "Darwin":
+        got = _ax_try(ax_live_windows)
+        if got is not _NO:
+            if not got:
+                raise LiveWindowError("No encontré la ventana de tu DAW. Ábrelo y vuelve a intentar.")
+            return max(got, key=lambda t: t[3] * t[4])
         out = _osa(f'tell application "System Events" to tell {_proc()}\n'
                    'set out to ""\nset i to 0\n'
                    'repeat with w in windows\nset i to i + 1\ntry\n'
@@ -1295,6 +1458,9 @@ def live_fullscreen(wid):
     """True si la ventana de Live está en pantalla completa de macOS."""
     if SYSTEM != "Darwin":
         return False
+    got = _ax_try(lambda pid: ax_live_fullscreen(pid, wid))
+    if got is not _NO:
+        return bool(got)
     out = _osa(f'tell application "System Events" to tell {_proc()} to '
                f'get value of attribute "AXFullScreen" of window {wid}')
     return out.strip().lower() == "true"
@@ -1302,6 +1468,8 @@ def live_fullscreen(wid):
 
 def set_live_fullscreen(wid, on):
     if SYSTEM == "Darwin":
+        if _ax_try(lambda pid: ax_live_fullscreen(pid, wid, bool(on))) is not _NO:
+            return
         _osa(f'tell application "System Events" to tell {_proc()} to '
              f'set value of attribute "AXFullScreen" of window {wid} to {"true" if on else "false"}')
 
@@ -1309,6 +1477,8 @@ def set_live_fullscreen(wid, on):
 def set_live_window(wid, x, y, w, h):
     x, y, w, h = int(x), int(y), int(w), int(h)
     if SYSTEM == "Darwin":
+        if _ax_try(lambda pid: ax_set_live_window(pid, wid, x, y, w, h)) is not _NO:
+            return
         _osa(f'tell application "System Events" to tell {_proc()}\n'
              f'set size of window {wid} to {{{w}, {h}}}\n'
              f'set position of window {wid} to {{{x}, {y}}}\n'
@@ -3828,6 +3998,45 @@ class GauxTimer:
         sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
         w.geometry(f"+{(sw - w.winfo_reqwidth()) // 2}+{(sh - w.winfo_reqheight()) // 3}")
 
+    def permission_help(self):
+        """Guía para dar el permiso de Accesibilidad de Top Live, con botón que abre directo
+        la lista correcta en Ajustes del Sistema y otro para reintentar."""
+        old = getattr(self, "_perm_win", None)
+        if old is not None and old.winfo_exists():
+            old.lift()
+            return
+        T = self.T
+        w = self._perm_win = tk.Toplevel(self.root)
+        w.title(f"{APP_NAME} · Permiso para Top Live")
+        w.configure(bg=T["bg"])
+        w.attributes("-topmost", True)
+        tk.Label(w, text="Permiso para Top Live", font=(self.f_title[0], self.f_title[1] + 2, "bold"),
+                 fg=T["acento2"], bg=T["bg"]).pack(anchor="w", padx=20, pady=(14, 0))
+        tk.Label(w, text=PERMISO_MAC, font=(self.f_sans, 11), fg=T["texto"], bg=T["bg"],
+                 justify="left", wraplength=460).pack(padx=20, pady=(6, 10), anchor="w")
+        row = tk.Frame(w, bg=T["bg"])
+        row.pack(fill="x", padx=20, pady=(0, 14))
+
+        def btn(text, cmd, main=False):
+            b = tk.Label(row, text=text, font=(self.f_sans, 11, "bold" if main else "normal"),
+                         padx=14, pady=4, cursor="hand2",
+                         bg=T["acento"] if main else T["pista"],
+                         fg="#FFFFFF" if main else T["texto"])
+            b.bind("<Button-1>", lambda e: cmd())
+            b.pack(side="right", padx=(8, 0))
+            return b
+
+        def retry():
+            w.destroy()
+            self.root.after(200, self.toggle_top_mode)
+
+        btn("Probar de nuevo", retry)
+        btn("Abrir Accesibilidad", open_accessibility_settings, main=True)
+        btn("Cerrar", w.destroy).pack_configure(side="left", padx=0)
+        w.update_idletasks()
+        sw, sh = w.winfo_screenwidth(), w.winfo_screenheight()
+        w.geometry(f"+{(sw - w.winfo_reqwidth()) // 2}+{(sh - w.winfo_reqheight()) // 3}")
+
     # ---- modo Top Live Performance ------------------------------------------
     def toggle_top_mode(self):
         if self.conf.get("top_mode"):
@@ -3839,6 +4048,10 @@ class GauxTimer:
 
     def enter_top_mode(self):
         was_fs = False
+        if SYSTEM == "Darwin" and mac_ax_trusted() is False:
+            mac_ax_trusted(prompt=True)        # macOS agrega el timer a la lista de Accesibilidad
+            self.permission_help()
+            return
         try:
             wid, x, y, w, h = live_main_window()
             if live_fullscreen(wid):
@@ -3887,7 +4100,10 @@ class GauxTimer:
                                       "No pude mover la ventana de Live. Sal de pantalla "
                                       "completa y activa el modo otra vez.")
         except LiveWindowError as e:
-            self.notice("Top Live Performance", str(e))
+            if str(e) == PERMISO_MAC:
+                self.permission_help()
+            else:
+                self.notice("Top Live Performance", str(e))
             return
         except Exception as e:
             self.notice("Top Live Performance", f"No se pudo activar el modo.\n\n{e}")
@@ -4249,7 +4465,11 @@ class GauxTimer:
                 pass
         if FROZEN and not AT_LOGIN and not DEMO:
             first = not self.conf.get("bienvenida_vista")
-            r.after(900, lambda: self.show_welcome(first))
+            r.after(900, lambda: self.show_welcome(first or INSTALLED))
+            if SYSTEM == "Darwin" and (first or INSTALLED) and mac_ax_trusted() is False:
+                # recién instalado: macOS pide de una vez el permiso de Accesibilidad (Top Live)
+                # y deja el timer en la lista; solo queda activar el interruptor
+                r.after(1600, lambda: mac_ax_trusted(prompt=True))
 
     def _tk_error(self, exc, val, tb):
         import traceback
@@ -4279,12 +4499,21 @@ class GauxTimer:
         if first:
             tips = ("Es normal que macOS te pida permisos para Gaux Live Timer:\n"
                     "•  Micrófono: para el analizador (BlackHole cuenta como micrófono).\n"
-                    "•  Accesibilidad y \"controlar System Events\": para Top Live.\n"
+                    "•  Accesibilidad: para Top Live (mover la ventana de tu DAW).\n"
                     "•  Grabación de pantalla (opcional): para leer el nombre del proyecto.\n\n"
                     "Para volver a ver los Ajustes, abre Gaux Live Timer otra vez desde "
                     "Aplicaciones, o haz doble clic sobre el timer.")
             tk.Label(w, text=tips, font=(sans, 11), fg=T["dim"], bg=T["bg"], wraplength=420,
                      justify="left").pack(anchor="w", padx=22, pady=(10, 0))
+        if first and SYSTEM == "Darwin" and mac_ax_trusted() is False:
+            pr = tk.Frame(w, bg=T["bg"])
+            pr.pack(fill="x", padx=22, pady=(12, 0))
+            tk.Label(pr, text="Top Live necesita el permiso de Accesibilidad.", font=(sans, 11),
+                     fg=T["texto"], bg=T["bg"]).pack(side="left")
+            pb = tk.Label(pr, text="Dar permiso", font=(sans, 11, "bold"), padx=12, pady=3,
+                          cursor="hand2", bg=T["acento"], fg="#FFFFFF")
+            pb.bind("<Button-1>", lambda e: open_accessibility_settings())
+            pb.pack(side="right")
         row = tk.Frame(w, bg=T["bg"])
         row.pack(fill="x", padx=22, pady=(14, 18))
         if SYSTEM in ("Darwin", "Windows"):
