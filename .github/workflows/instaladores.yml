@@ -41,19 +41,17 @@ jobs:
 
       - name: Certificado de firma fijo (los permisos de macOS no se pierden al actualizar)
         env:
-          P12: ${{ secrets.MAC_SIGN_P12 }}
           PASS: ${{ secrets.MAC_SIGN_PASS }}
         run: |
-          if [ -z "$P12" ]; then echo "Sin certificado guardado: firma ad-hoc"; exit 0; fi
+          # el certificado va cifrado en el repositorio; la clave que lo abre es un secreto
+          if [ -z "$PASS" ]; then echo "Falta el secreto MAC_SIGN_PASS: firma ad-hoc"; exit 0; fi
           KC="$RUNNER_TEMP/gaux.keychain-db"
           security create-keychain -p gaux "$KC"
           security set-keychain-settings -lut 21600 "$KC"
           security unlock-keychain -p gaux "$KC"
-          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/firma.p12"
-          security import "$RUNNER_TEMP/firma.p12" -k "$KC" -P "$PASS" -T /usr/bin/codesign
+          security import packaging/mac/firma.p12 -k "$KC" -P "$PASS" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k gaux "$KC" >/dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          rm -f "$RUNNER_TEMP/firma.p12"
           H=$(security find-certificate -c "Gaux Live Timer" -Z "$KC" | awk '/SHA-1/{print $NF; exit}')
           echo "Certificado: $H"
           echo "MAC_SIGN_IDENTITY=$H" >> "$GITHUB_ENV"
