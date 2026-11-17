@@ -46,6 +46,7 @@ def test_sin_permiso_muestra_la_guia(fresh, mac):
 def test_abrir_accesibilidad_va_directo_a_la_lista(fresh, mac):
     app = fresh
     app.enter_top_mode()
+    app._perm_win.update()                     # en Windows el clic solo llega a ventanas ya visibles
     btn = dict(_labels(app._perm_win))["Abrir Accesibilidad"]
     btn.event_generate("<Button-1>")
     assert ["open", L.AX_SETTINGS_URL] in mac["open"]
@@ -58,6 +59,7 @@ def test_probar_de_nuevo_reintenta(fresh, mac, monkeypatch):
     app.enter_top_mode()
     seen = []
     monkeypatch.setattr(app, "toggle_top_mode", lambda: seen.append(1))
+    app._perm_win.update()
     dict(_labels(app._perm_win))["Probar de nuevo"].event_generate("<Button-1>")
     app.root.after(300, lambda: None)
     import time
