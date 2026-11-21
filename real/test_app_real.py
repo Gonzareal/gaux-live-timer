@@ -406,8 +406,11 @@ def test_dos_sesiones_de_verdad_del_mismo_proyecto(app, fakes):
     """Dos sesiones de más de un minuto (las más cortas no se anotan como sesión)."""
     name, exe, title, daw, proj = DAWS[0]
     n0 = len(data().get("sesiones", []))
-    _, mid = contar_con(fakes, name, exe, title, 66)
+    contar_con(fakes, name, exe, title, 66)
     assert wait(lambda: len(data().get("sesiones", [])) == n0 + 1, 10)
+    # leer DESPUÉS de que se anotó la sesión (un guardado automático de cada 30 s puede caer
+    # justo tras el cierre del DAW y antes de que el timer lo note)
+    mid = data()
     _, after = contar_con(fakes, name, exe, title, 66)
     assert wait(lambda: len(data().get("sesiones", [])) == n0 + 2, 10)
     after = data()
