@@ -28,7 +28,7 @@ Un estilo para que el timer sea tuyo: en ⚙ → Estilo → **Personal**.
 - A diferencia del Gaux Mode, aquí sí puedes elegir las letras del título y del reloj.
 
 ## Menú de opciones
-**Doble clic en cualquier parte del timer** (o ctrl+clic) abre el menú: pausar/reanudar, tomar break, reiniciar sesión, **proyecto**, **ver proyectos**, ajustes, estilo, modo, vista, analizador, Top Live y **Cerrar Gaux Live Timer**.
+**Doble clic en cualquier parte del timer** (o ctrl+clic) abre el menú: pausar/reanudar, tomar break / volver del break, sesión total y trabajo real, reiniciar sesión, **proyecto**, **ver proyectos**, ajustes, estilo, modo, vista, analizador, Top Live y **Cerrar Gaux Live Timer**.
 
 ## Vistas
 - **Completa:** reloj, metas y línea del modo autónomo.
@@ -97,17 +97,26 @@ Una ventana con secciones a la izquierda; cada una explica en una línea qué ha
 Diaria, semanal y mensual (se ajustan en ⚙ → Metas). Al cumplir una, la barra se vuelve dorada con una pequeña celebración.
 
 ## Pausa y break
-- **Botón ❚❚ / ▶** (arriba, junto al –; también en la vista minimizada): pausa y reanuda el contador a mano.
-- **Tomar break:** en modo autónomo aparece cuando se acerca o llega la hora del break. Muestra la cuenta regresiva del descanso.
-- **Volver / Reanudar:** termina el break. Si descansaste el tiempo completo, la racha vuelve a cero.
-- También están en el menú de ctrl+clic.
+- **Botón ☕ (la taza)**, junto a ❚❚ en **todas** las vistas: completa, compacta, minimizada (horizontal y vertical), la franja de Top Live y con el analizador abierto.
+  - **Tocarla inicia el break.** El break solo empieza con este botón (o con el menú): nunca se activa solo.
+  - Durante el break el reloj **cuenta hacia atrás** los minutos de descanso (5 por defecto) y la taza muestra un anillo con lo que va del descanso. El tiempo del proyecto queda quieto.
+  - Al terminar, el timer **no vuelve solo**: el reloj muestra **VOLVER** y la taza late hasta que la tocas. Ahí sigue contando el proyecto donde iba.
+  - Si vuelves antes de tiempo, la racha baja en proporción a lo que descansaste.
+- Con el aviso BREAK / RECHARGE en pantalla, tocar el reloj también inicia el break (y con VOLVER, vuelve). Arrastrar desde ahí sigue moviendo el timer.
+- **Botón ❚❚ / ▶:** pausa y reanuda el contador a mano (▶ también termina un break).
+- También están en el menú (doble clic o ctrl+clic): **Tomar break / Volver del break**.
+
+## Las dos medidas de cada sesión
+- **Sesión total:** todo el tiempo con el DAW abierto, sin excepción (trabajo, breaks, pausas y ausencias).
+- **Trabajo real:** solo lo que trabajaste, y aparte cuánto se fue en **breaks** (y cuántos) y en **ausencias** (fuera del DAW, sin actividad o en pausa).
+- Se ven en el menú (doble clic), en la tarjeta al cerrar el DAW y en **Ver proyectos… → Exportar**, que además del archivo de proyectos guarda **Sesiones.csv** con cada sesión.
 
 ## Modo autónomo
 Vigila tu racha de trabajo continuo, solo con indicadores dentro del timer (sin notificaciones):
 - **Morado:** todo bien, muestra la racha y cuánto falta para el break.
 - **Ámbar:** faltan pocos minutos.
 - **Rojo pulsante:** toca break para descansar y estirar.
-- Si te alejas el tiempo del break (5 min por defecto), la racha vuelve a cero sola.
+- Si te alejas del DAW el tiempo del break (5 min por defecto), la racha vuelve a cero, pero eso no es un break: se anota como ausencia.
 - También se pone en rojo si pasas las horas máximas del día (8 h por defecto).
 
 Todo esto se ajusta en ⚙. En modo **Normal** no hay indicadores de break.

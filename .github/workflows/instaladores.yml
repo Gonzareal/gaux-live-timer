@@ -85,8 +85,8 @@ jobs:
           cat ~/.live_timer/registro.txt
           if grep -q "Traceback" ~/.live_timer/registro.txt; then echo "::error title=Errores en la app::revisa el registro"; exit 1; fi
 
-      - name: Pruebas reales con la app instalada (DAWs reales en pantalla, guardado, Link, CPU)
-        timeout-minutes: 45
+      - name: Pruebas reales con la app instalada (DAWs reales en pantalla, guardado, Link, CPU, break con el mouse)
+        timeout-minutes: 70
         run: |
           set -o pipefail
           $PYTHON -m pip install --quiet pytest psutil
@@ -202,8 +202,8 @@ jobs:
           Stop-Process -Id $p.Id -Force
           if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'Traceback' -Quiet)) { Write-Output "::error title=Errores en la app::"; exit 1 }
 
-      - name: Pruebas reales con la app instalada (DAWs reales en pantalla, guardado, Link, CPU)
-        timeout-minutes: 45
+      - name: Pruebas reales con la app instalada (DAWs reales en pantalla, guardado, Link, CPU, break con el mouse)
+        timeout-minutes: 70
         shell: pwsh
         env:
           PYTHONIOENCODING: utf-8

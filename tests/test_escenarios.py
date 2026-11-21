@@ -274,7 +274,10 @@ def test_break_cortado_no_reinicia_la_racha(fresh, vista):
     step(app, 60)
     app.resume()
     step(app, 2)
-    assert app.lvl == 2, "un break de 1 minuto no cuenta como descanso"
+    # un break de 1 de 10 minutos solo descuenta una décima de la racha: el aviso vuelve pronto
+    assert app.lvl == 1 and app.streak == pytest.approx(0.9 * (50 * 60 + 5) + 2, abs=3)
+    step(app, 5 * 60 + 5)
+    assert app.lvl == 2 and app.manual is None, "el aviso vuelve, pero el break no empieza solo"
     sano(app)
 
 

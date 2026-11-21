@@ -99,7 +99,7 @@ def test_aviso_de_descanso_visible(fresh, tema, vista, orient, monkeypatch):
     cv = app.cv
     before = [cv.itemcget(d["main"], "state") or "normal" for d in app.digits]
     monkeypatch.setattr(L.time, "monotonic", lambda: 1000.5)     # fase "cartel"
-    app._break_flash(True)
+    app._break_flash("alerta")
     cv = app.cv
     assert app.brk_items, "debe dibujarse el cartel de descanso"
     for it in app.brk_items:
@@ -110,7 +110,7 @@ def test_aviso_de_descanso_visible(fresh, tema, vista, orient, monkeypatch):
     b = cv.bbox(tx)
     assert b[0] >= -2 and b[1] >= -2 and b[2] <= app.W + 2 and b[3] <= app.H + 2
     monkeypatch.setattr(L.time, "monotonic", lambda: 1003.0)     # fase "reloj"
-    app._break_flash(True)
+    app._break_flash("alerta")
     # el reloj vuelve tal cual (en vertical los ':' siguen ocultos)
     assert [cv.itemcget(d["main"], "state") or "normal" for d in app.digits] == before
     assert all(cv.itemcget(it, "state") == "hidden" for it in app.brk_items)
@@ -183,7 +183,9 @@ def test_tomar_break_y_volver(fresh, brand):
     assert app.session == pytest.approx(before)
     assert app.chip_label == "volver"
     step(app, 4 * 60)
-    assert app.lvl == -2 and app.chip_label == "reanudar"
+    assert app.lvl == -2 and app.chip_label == "volver"
+    step(app, 30 * 60)                  # no vuelve solo: espera el botón
+    assert app.manual == "break" and app.state == "break" and app.session == pytest.approx(before)
     app.chip_action()
     assert app.manual is None
     step(app, 1)

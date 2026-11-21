@@ -186,9 +186,9 @@ def test_cartel_de_descanso_deja_el_reloj_igual(fresh, vista, orient, monkeypatc
     units = [st(u) for u in cv.find_withtag("clockunit")]
     for t in (4000.5, 4002.5, 4000.2, 4003.9):
         monkeypatch.setattr(L.time, "monotonic", lambda t=t: t)
-        app._break_flash(True)
+        app._break_flash("alerta")
     monkeypatch.undo()
-    app._break_flash(False)
+    app._break_flash(None)
     assert [st(d["main"]) for d in app.digits] == before
     assert [st(u) for u in cv.find_withtag("clockunit")] == units
 

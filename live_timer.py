@@ -1746,6 +1746,16 @@ class GauxTimer:
         self.analyzer = None
         self.manual = None          # None | "pausa" | "break"
         self.break_start_v = 0.0
+        # medidas de la sesión: total (todo, sin excepción) = real + breaks + ausencias
+        self.sess_v0 = None         # reloj interno al abrir la sesión
+        self.sess_breaks = 0.0      # segundos en breaks ya terminados
+        self.n_breaks = 0
+        self.brk_c = None           # botón de break (taza): centro
+        self._brk_sig = None
+        self.brk_parts = {}
+        self._brk_mode = None       # cartel sobre el reloj: None | "alerta" | "volver"
+        self._clock_box = None
+        self._press_act = None
         self.hit = []               # zonas clicables: (x1, y1, x2, y2, nombre)
         self.hover = None
         self.chip_label = None
@@ -1889,6 +1899,9 @@ class GauxTimer:
             self.restack_soon(80)
         self.refresh_text()
         self.render_frame(force=True)
+        if FROZEN and self.brk_c:              # para el registro (soporte y pruebas reales)
+            print(f"vista: {'top' if self.top else self.pos_key()} {self.W}x{self.H} "
+                  f"break={self.brk_c[0]:.0f},{self.brk_c[1]:.0f}")
 
     def _place(self):
         self.root.update_idletasks()
@@ -2189,6 +2202,9 @@ class GauxTimer:
         self.proj_it = None
         self.proj_w = None
         self.brk_items = None               # aviso de descanso sobre el reloj
+        self._brk_mode = None
+        self.brk_c, self._brk_sig, self.brk_parts = None, None, {}
+        self._clock_box = None
         self.status_font = None
         self.chip_y = None
         if not hasattr(self, "_font_cache"):
@@ -2276,6 +2292,8 @@ class GauxTimer:
         self.hit = [(x1 * k, y1 * k, x2 * k, y2 * k, n) for x1, y1, x2, y2, n in self.hit]
         if self.pp_c:
             self.pp_c = (self.pp_c[0] * k, self.pp_c[1] * k)
+        if self.brk_c:
+            self.brk_c = (self.brk_c[0] * k, self.brk_c[1] * k)
         self.pp_s *= k
         self.halo_amp *= k
         self.dot_c = (self.dot_c[0] * k, self.dot_c[1] * k)
@@ -2536,16 +2554,32 @@ class GauxTimer:
         if show_title:
             title_w = tkfont.Font(family=tfont[0], size=tsize, weight=tfont[2]).measure(self.title_text)
             lead = 0 if show_status else 14
-            W = int(max(dig_w + 2 * x0, x0 + lead + title_w + 2 * btn + 14))
+            W = int(max(dig_w + 2 * x0, x0 + lead + title_w + 3.6 * btn + 16))
             ty = m + max(11, int(20 * k))
         else:
-            W = int(x0 + 16 + dig_w + 2 * btn + 12)
+            W = int(x0 + 16 + dig_w + 3.4 * btn + 12)
             ty = H / 2
-        # botones (pausa y ajustes)
+            # junto a la cámara (MacBook con notch) el ancho es el de la franja: se achica el
+            # reloj antes que quitar un botón (break, pausa y ajustes siempre están)
+            fb = getattr(self, "fs_band", None)
+            maxw = fb["left"][2] if fb and fb.get("left") else None
+            while maxw and W > maxw and (dsize > 10 or btn > 15):
+                if dsize > 10:
+                    dsize -= 1
+                    dfont = (self.f_clock_family, dsize, "bold")
+                    f = tkfont.Font(family=dfont[0], size=dsize, weight="bold")
+                    dig_w = (6 * max(f.measure(d) for d in "0123456789")
+                             + 2 * (f.measure(":") + max(2, dsize // 7)))
+                else:
+                    btn -= 1
+                W = int(x0 + 16 + dig_w + 3.4 * btn + 12)
+        # botones (break, pausa y ajustes)
         by = ty
         self.button(W - m - btn * 0.7, by, "⚙", "cfg", bsize, pad=btn // 2)
         self.pp_c = (W - m - btn * 1.75, by)
         self.hit.append((W - m - btn * 2.25, by - btn / 2, W - m - btn * 1.25, by + btn / 2, "pp"))
+        self.brk_c = (W - m - btn * 2.85, by)
+        self.hit.append((W - m - btn * 3.4, by - btn / 2, W - m - btn * 2.3, by + btn / 2, "brk"))
         self.draw_pp()
         # título / estado
         if show_status:
@@ -2586,11 +2620,14 @@ class GauxTimer:
             dig_w = 6 * max(f.measure(d) for d in "0123456789") + 2 * (f.measure(":") + 2)
             x_dig = m + 17
             x_pp = x_dig + dig_w + 11
-            W = int(x_pp + 27)
+            x_bk = x_pp + 19
+            W = int(x_bk + 32)
             self._dot(m + 9, cy, 3, 1)
             self.digits = self.draw_digits(x_dig, cy, font, glow=False)
             self.pp_c = (x_pp, cy)
-            self.hit.append((x_pp - 9, 0, x_pp + 8, H, "pp"))
+            self.hit.append((x_pp - 9, 0, x_pp + 9, H, "pp"))
+            self.brk_c = (x_bk, cy)
+            self.hit.append((x_bk - 9, 0, x_bk + 9, H, "brk"))
             self.draw_pp()
             self.button(W - m - 12, cy, "□", "max", 10, pad=7)
             return W, H, R, m
@@ -2601,7 +2638,7 @@ class GauxTimer:
         x0 = m + 14
         self.title_it = cv.create_text(x0, m + 20, text=self.title_text, anchor="w",
                                        font=self.f_title, fill=T["acento2"])
-        limit = W - m - 84                  # no pisar los botones
+        limit = W - m - 106                 # no pisar los botones
         while cv.bbox(self.title_it)[2] > limit and self.f_title[1] > 9:
             self.f_title = (self.f_title[0], self.f_title[1] - 1, self.f_title[2])
             cv.itemconfig(self.title_it, font=self.f_title)
@@ -2613,6 +2650,8 @@ class GauxTimer:
             self.button(W - m - 42, m + 18, "–", "min", 16)
         self.pp_c = (W - m - 66, m + 20)
         self.hit.append((W - m - 78, m + 8, W - m - 54, m + 32, "pp"))
+        self.brk_c = (W - m - 90, m + 20)
+        self.hit.append((W - m - 102, m + 8, W - m - 78, m + 32, "brk"))
         self.draw_pp()
 
         cy = m + 46
@@ -2652,9 +2691,11 @@ class GauxTimer:
             self.digits = self.draw_digits_v(cx, m + 38, (cf, 15, "bold"), 23, glow=False)
             self.pp_c = (cx, m + 112)
             self.hit.append((m, m + 100, W - m, m + 124, "pp"))
+            self.brk_c = (cx, m + 136)
+            self.hit.append((m, m + 125, W - m, m + 147, "brk"))
             self.draw_pp()
-            self.button(cx, m + 134, "□", "max", 12, pad=11)
-            return W, m + 152, R, m
+            self.button(cx, m + 158, "□", "max", 12, pad=11)
+            return W, m + 176, R, m
 
         m, W, R = self.MARGIN, 168, 16
         self.halo_amp, self.pp_s = 4.0, 1.0
@@ -2669,6 +2710,8 @@ class GauxTimer:
         y = cv.bbox(t)[3] + 18             # fuentes script (Windows) bajan más
         self.pp_c = (cx - 26, y)
         self.hit.append((cx - 38, y - 12, cx - 14, y + 12, "pp"))
+        self.brk_c = (cx - 52, y)
+        self.hit.append((cx - 64, y - 12, cx - 39, y + 12, "brk"))
         self.draw_pp()
         self.button(cx, y - 1, "–", "min", 16)
         self.button(cx + 26, y, "⚙", "cfg", 14)
@@ -2790,6 +2833,86 @@ class GauxTimer:
             for x1 in (cx - 5 * k, cx + 1.5 * k):
                 cv.create_rectangle(x1, cy - 6 * k, x1 + 3.5 * k, cy + 6 * k, fill=col,
                                     outline="", tags=("btn_pp",))
+        self.draw_brk()
+
+    def break_frac(self):
+        """Parte del break ya cumplida (0 a 1)."""
+        tot = max(60, self.conf["autonomo"]["break_min"] * 60)
+        return max(0.0, min(1.0, (self.vclock - self.break_start_v) / tot))
+
+    def draw_brk(self):
+        """Botón de break (una taza) en todas las vistas. Fuera del break lo inicia; durante
+        el break muestra un anillo con el tiempo que va y, al tocarlo, se vuelve del break."""
+        cv, T = self.cv, self.T
+        if not self.brk_c:
+            return
+        in_brk = self.manual == "break"
+        frac = self.break_frac() if in_brk else 0.0
+        sig = (self.brk_c, self.pp_s, self.hover == "brk", in_brk, int(frac * 180), T["acento2"],
+               bool(self.counting and self.lvl >= 1), self.lvl == -2)
+        if sig == self._brk_sig and cv.find_withtag("btn_brk"):
+            return
+        self._brk_sig = sig
+        for it in cv.find_withtag("btn_brk"):
+            self._icache.pop(it, None)
+            self._ccache.pop(it, None)
+        cv.delete("btn_brk")
+        cx, cy = self.brk_c
+        k = self.pp_s * 1.12                 # la taza, un poco más grande que ⏸ (se ve mejor)
+        hov = self.hover == "brk"
+        if in_brk:
+            col = "#FFFFFF" if hov else T["acento2"]
+        else:
+            col = T["acento2"] if hov else T["dim"]
+        tg = ("btn_brk",)
+        r = 8.6 * k
+        lw = max(1.0, 1.4 * k)
+        P = self.brk_parts = {}
+        # anillo: halo para avisar (oculto si no hace falta) y progreso del break
+        P["halo"] = cv.create_oval(cx - r, cy - r, cx + r, cy + r, outline="",
+                                   width=max(1.0, 1.6 * k), tags=tg)
+        if in_brk:
+            P["pista"] = cv.create_oval(cx - r, cy - r, cx + r, cy + r,
+                                        outline=mix(T["acento2"], T["bg"], 0.7),
+                                        width=max(1.0, 1.6 * k), tags=tg)
+            if frac > 0:
+                P["arco"] = cv.create_arc(cx - r, cy - r, cx + r, cy + r, start=90,
+                                          extent=-359.9 * frac, style="arc",
+                                          outline=col, width=max(1.2, 2.2 * k), tags=tg)
+        # taza
+        P["taza"] = cv.create_polygon(cx - 4.6 * k, cy - 1.6 * k, cx + 3.0 * k, cy - 1.6 * k,
+                                      cx + 2.2 * k, cy + 5.2 * k, cx - 3.8 * k, cy + 5.2 * k,
+                                      fill=col, outline="", tags=tg)
+        P["asa"] = cv.create_line(cx + 2.8 * k, cy - 0.2 * k, cx + 5.4 * k, cy - 0.2 * k,
+                                  cx + 5.4 * k, cy + 2.2 * k, cx + 2.4 * k, cy + 3.4 * k,
+                                  fill=col, width=lw, tags=tg)
+        P["vapor"] = [cv.create_line(x, cy - 3.6 * k, x + 0.9 * k, cy - 5.2 * k, x, cy - 6.8 * k,
+                                     fill=col, width=lw, smooth=True, tags=tg)
+                      for x in (cx - 2.4 * k, cx + 0.4 * k)]
+
+    def _anim_brk(self, p):
+        """El botón de break late cuando toca descansar y cuando el break ya terminó."""
+        P = self.brk_parts
+        if not P or self.hover == "brk":
+            return
+        T = self.T
+        lvl = self.lvl
+        if self.counting and lvl == 2:
+            base = self.T.get("alerta", ALERT)
+        elif self.counting and lvl == 1:
+            base = WARN
+        elif self.manual == "break" and lvl == -2:
+            base = T["acento2"]
+        else:
+            return
+        col = mix(base, T["bg"], 0.6 * (1 - p))        # late en brillo (vale para cualquier color)
+        for key in ("taza",):
+            self._ic(P[key], fill=col)
+        for it in [P["asa"]] + P["vapor"]:
+            self._ic(it, fill=col)
+        if "arco" in P:
+            self._ic(P["arco"], outline=col)
+        self._ic(P["halo"], outline=mix(base, T["bg"], 0.15 + 0.6 * (1 - p)))
 
     def _fit_goal_label(self, b):
         """El nombre de la meta usa todo el espacio que le deja el valor de la derecha."""
@@ -2932,7 +3055,7 @@ class GauxTimer:
             left = brk - (self.vclock - self.break_start_v)
             if left > 0:
                 return -1, self._v(f"En break · quedan {fmt_mmss(left)}", f"RECHARGE · {fmt_mmss(left)}")
-            return -2, self._v("Break completo", "RECHARGED")
+            return -2, self._v("Break listo · toca Volver", "RECHARGED · TAP BACK")
         if self.conf["modo"] != "autonomo":
             return 0, NORMAL_TIPS[int(time.time() // 45) % len(NORMAL_TIPS)]
         rested = (self.vclock - self.last_count_v) if self.last_count_v is not None else None
@@ -2951,12 +3074,15 @@ class GauxTimer:
             return 0, self._v(f"Racha {fmt_short(streak)} · pausado", f"STREAK {fmt_short(streak)} · HOLD")
         if streak <= 0:
             return 0, self._v("Energía al 100% · listo para crear", "FULL POWER · LET'S GAUUUUX")
-        if streak >= work * 0.8:
-            return -1, self._v(f"Descansando {fmt_mmss(rested or 0)} / {fmt_mmss(brk)}", f"RECHARGE · {fmt_mmss(rested or 0)} / {fmt_mmss(brk)}")
+        # sin break tomado con el botón no hay modo break: solo se informa la racha
         return 0, self._v(f"Racha {fmt_short(streak)} · en pausa", f"STREAK {fmt_short(streak)} · HOLD")
 
     def refresh_text(self):
-        self.set_clock(fmt_clock(min(self.session, CLOCK_MAX)))   # el reloj tiene 2 cifras de horas
+        if self.manual == "break":       # en break el reloj cuenta hacia atrás lo que queda
+            left = self.conf["autonomo"]["break_min"] * 60 - (self.vclock - self.break_start_v)
+            self.set_clock(fmt_clock(max(0.0, left)))
+        else:
+            self.set_clock(fmt_clock(min(self.session, CLOCK_MAX)))   # 2 cifras de horas
         if self.status_it:
             txt = GAUX_STATUS[self.state] if self.brand else {"sesion": "En sesión",
                    "fondo": "Pausa · fuera del DAW",
@@ -2998,7 +3124,7 @@ class GauxTimer:
         if self.auto_it:
             self.cv.itemconfig(self.auto_it, text=self.auto_msg)
             if self.manual == "break":
-                chip = "volver" if self.lvl == -1 else "reanudar"
+                chip = "volver"
             elif self.counting and self.lvl >= 1:
                 chip = "break"
             else:
@@ -3036,23 +3162,40 @@ class GauxTimer:
             self.cv.coords(item, *c)
             self._ccache[item] = c
 
-    def _break_flash(self, on):
+    def _break_flash(self, mode):
         """Cuando toca descansar, el reloj se alterna con un cartel BREAK bien visible,
-        en todas las vistas (también mini, compacta y Top Live). Sin notificaciones."""
+        en todas las vistas (también mini, compacta y Top Live). Al terminar el break, el
+        cartel dice VOLVER hasta que se toque el botón. Sin notificaciones.
+        Tocar el reloj o el cartel también hace lo del botón (ver on_press)."""
         cv, T = self.cv, self.T
-        show = on and (time.monotonic() % 4.0) < 1.6
-        if not show:
+        if mode != self._brk_mode:                  # otro cartel: se rehace
             if self.brk_items:
+                self._flash_off()
                 for it in self.brk_items:
-                    cv.itemconfig(it, state="hidden")
-                for d in self.digits:
-                    if d.get("_hid"):
-                        st = d.pop("_hid")              # el estado que tenía (':' ocultos)
-                        cv.itemconfig(d["main"], state=st)
-                        for it, _, _ in d["glows"]:
-                            cv.itemconfig(it, state=st)
-                cv.itemconfig("clockunit", state="normal")
+                    cv.delete(it)
+                self.brk_items = None
+            self._brk_mode = mode
+        show = bool(mode) and (time.monotonic() % 4.0) < (1.6 if mode == "alerta" else 2.2)
+        if not show:
+            self._flash_off()
             return
+        self._flash_on(mode)
+
+    def _flash_off(self):
+        cv = self.cv
+        if self.brk_items:
+            for it in self.brk_items:
+                cv.itemconfig(it, state="hidden")
+            for d in self.digits:
+                if d.get("_hid"):
+                    st = d.pop("_hid")              # el estado que tenía (':' ocultos)
+                    cv.itemconfig(d["main"], state=st)
+                    for it, _, _ in d["glows"]:
+                        cv.itemconfig(it, state=st)
+            cv.itemconfig("clockunit", state="normal")
+
+    def _flash_on(self, mode):
+        cv, T = self.cv, self.T
         if not self.brk_items:
             boxes = [cv.bbox(d["main"]) for d in self.digits
                      if cv.itemcget(d["main"], "state") != "hidden"]
@@ -3066,11 +3209,18 @@ class GauxTimer:
             x1, y1 = max(1, x1 - 4), max(1, y1 + 1)
             x2, y2 = min(self.W - 1, x2 + 4), min(self.H - 1, y2 - 1)
             w, h = x2 - x1, y2 - y1
-            fill = T["acento"] if self.brand else self.T.get("alerta", ALERT)
+            self._clock_box = (x1, y1, x2, y2)
+            if mode == "volver":
+                fill = T["acento2"]
+                long_w = "BACK" if self.brand else "VOLVER"
+                words = ([long_w, "BACK", "▶"] if w >= h * 0.8
+                         else ["\n".join(long_w), "▶"])
+            else:
+                fill = T["acento"] if self.brand else self.T.get("alerta", ALERT)
+                long_w = "RECHARGE" if self.brand else "BREAK"
+                words = [long_w, "BREAK", "BRK"] if w >= h * 0.8 else ["\n".join("BREAK"), "BRK"]
             bg = rrect(cv, x1, y1, x2, y2, min(8, h / 4, w / 4), outline="", fill=fill)
             fam = self.f_label[0] if self.brand else self.f_sans
-            long_w = "RECHARGE" if self.brand else "BREAK"
-            words = [long_w, "BREAK", "BRK"] if w >= h * 0.8 else ["\n".join("BREAK"), "BRK"]
             tx = cv.create_text((x1 + x2) / 2, (y1 + y2) / 2, text="", justify="center",
                                 fill="#FFFFFF")
             for word in dict.fromkeys(words):
@@ -3126,7 +3276,9 @@ class GauxTimer:
         elif self.counting:
             key, p = T["borde"], s
         elif lvl == -2:
-            key, p = T["acento2"], s
+            key, p = T["acento2"], fast
+        elif lvl == -1:
+            key, p = T["acento2"], slow
         else:
             key, p = mix(T["borde"], T["bg"], .45), 0.3
 
@@ -3161,7 +3313,10 @@ class GauxTimer:
                 self._ic(self.title_it, fill=mix(T["acento"], T["acento2"], slow))
 
         # dígitos con rebote y resplandor (ámbar al acercarse el descanso)
-        if self.counting and lvl == 1:
+        if self.manual == "break":       # cuenta regresiva del break: viva, en el color 2
+            main = T["acento2"] if lvl == -1 else mix(T["acento2"], "#FFFFFF", 0.5 * fast)
+            glow = mix(T["acento2"], T["bg"], 0.6 - 0.15 * s)
+        elif self.counting and lvl == 1:
             main, glow = WARN, mix(WARN, T["bg"], 0.55 - 0.2 * s)
         elif self.counting:
             main = mix(T["texto"], self.T.get("alerta", ALERT), 0.4 * fast) if lvl == 2 else T["texto"]
@@ -3183,7 +3338,13 @@ class GauxTimer:
                     self._co(it, d["x"] + dx, d["y"] + dy + d["off"])
 
         if style:
-            self._break_flash(lvl == 2 and self.counting)
+            if lvl == 2 and self.counting:
+                self._break_flash("alerta")
+            elif lvl == -2 and self.manual == "break":
+                self._break_flash("volver")
+            else:
+                self._break_flash(None)
+            self._anim_brk(fast if lvl in (2, -2) else s)
 
         # barras de metas
         for b in self.bars:
@@ -3489,7 +3650,7 @@ class GauxTimer:
                 self._ic(self.splash_bg, state="hidden")
                 self._ic(self.splash, state="hidden")
 
-    def show_session_card(self, sess, proj=None):
+    def show_session_card(self, sess, proj=None, met=None):
         """Ritual de cierre: resumen de la sesión al cerrar el DAW (Gaux Mode y Personal)."""
         if self.card is not None:
             try:
@@ -3502,7 +3663,15 @@ class GauxTimer:
         crushed = g["activa"] and vals["diaria"] >= max(60, g["segundos"])
         lab_s, lab_h, lab_w = (("SESSION", "HOY", "SEMANA") if self.brand
                                else ("SESIÓN", "HOY", "SEMANA"))
-        rows = [(lab_s, fmt_short(sess).upper()), (lab_h, fmt_short(vals["diaria"]).upper())]
+        if met:          # las dos medidas: todo el tiempo y lo realmente trabajado
+            nb = met.get("n_breaks", 0)
+            rows = [("SESIÓN TOTAL", fmt_short(met["total"]).upper()),
+                    ("TRABAJO REAL", fmt_short(sess).upper()),
+                    (f"BREAKS ({nb})", fmt_short(met["breaks"]).upper()),
+                    ("AUSENCIAS", fmt_short(met["ausencias"]).upper()),
+                    (lab_h, fmt_short(vals["diaria"]).upper())]
+        else:
+            rows = [(lab_s, fmt_short(sess).upper()), (lab_h, fmt_short(vals["diaria"]).upper())]
         if proj and proj != SIN_PROYECTO:
             pt = self.project_values(proj)["total"]
             pname = proj.upper() if self.brand else proj
@@ -3767,10 +3936,15 @@ class GauxTimer:
 
     def _close_session(self):
         if self.session >= 60 and self.session_start:
+            met = self.session_metrics()
             self.data["sesiones"].append({
                 "inicio": self.session_start,
                 "fin": dt.datetime.now().isoformat(timespec="seconds"),
-                "segundos": int(self.session),
+                "segundos": int(self.session),              # horas reales trabajadas
+                "total": int(met["total"]),                 # todas, sin excepción
+                "breaks": int(met["breaks"]),
+                "n_breaks": int(met["n_breaks"]),
+                "ausencias": int(met["ausencias"]),
                 "proyectos": {k: int(v) for k, v in self.session_proj.items() if v >= 1},
             })
             self.data["sesiones"] = self.data["sesiones"][-500:]
@@ -3779,6 +3953,8 @@ class GauxTimer:
                 self.data["proyectos"][name]["sesiones"] += 1
         self.session_proj = {}
         self.session = 0.0
+        self.sess_v0 = self.vclock
+        self.sess_breaks, self.n_breaks = 0.0, 0
         save_json(DATA_FILE, self.data)
 
     def _settings_open(self):
@@ -3804,8 +3980,7 @@ class GauxTimer:
                 self._title_t = 0.0                        # leer el proyecto ya mismo
                 if self.conf.get("top_mode"):
                     self.root.after(2500, lambda: self._bg("reapply", self.reapply_top))
-                self.session = 0.0
-                self.session_start = dt.datetime.now().isoformat(timespec="seconds")
+                self._open_session()
                 if self.conf["analizador"]["activo"] and self.ensure_analyzer():
                     self.analyzer.start_audio()
                 self.watch_front(reschedule=False)
@@ -3815,10 +3990,12 @@ class GauxTimer:
                 self.state = "espera"
                 sess = self.session
                 sess_proj = self.project_name()
+                met = self.session_metrics()
                 self._close_session()
+                self.manual = None
                 self.detected = None
                 if self.ritual and sess >= 60:
-                    self.show_session_card(sess, sess_proj)
+                    self.show_session_card(sess, sess_proj, met)
                 self.set_visible(False)
                 if self.analyzer:
                     self.analyzer.stop_audio()
@@ -3932,14 +4109,40 @@ class GauxTimer:
                 self.open_settings()
             elif name == "pp":
                 self.toggle_pause()
-            elif name == "chip":
+            elif name in ("chip", "brk"):
                 self.chip_action()
             elif name == "proj":
                 self.show_project_menu(e)
             return
+        # con el aviso BREAK o VOLVER en pantalla, tocar el reloj también sirve (al soltar,
+        # si no se arrastró: así el timer se sigue pudiendo mover desde ahí)
+        act = self._clock_action(e.x, e.y)
         if self.conf.get("top_mode"):
+            if act:
+                self._last_btn = time.monotonic()
+                act()
             return
+        self._press_act = (act, e.x_root, e.y_root) if act else None
         self._drag = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
+
+    def _clock_action(self, x, y):
+        """Acción al tocar el reloj cuando muestra el aviso de break o el de volver."""
+        if self.counting and self.lvl == 2:
+            act = self.start_break
+        elif self.manual == "break" and self.lvl == -2:
+            act = self.resume
+        else:
+            return None
+        box = self._clock_box
+        if box is None:
+            boxes = [self.cv.bbox(d["main"]) for d in self.digits]
+            boxes = [b for b in boxes if b]
+            if not boxes:
+                return None
+            box = (min(b[0] for b in boxes) - 4, min(b[1] for b in boxes),
+                   max(b[2] for b in boxes) + 4, max(b[3] for b in boxes))
+        x1, y1, x2, y2 = box
+        return act if x1 <= x <= x2 and y1 <= y <= y2 else None
 
     # ---- pausa y break manuales -------------------------------------------
     # ---- analizador de audio ------------------------------------------------
@@ -4190,17 +4393,60 @@ class GauxTimer:
             self._after_manual()
 
     def start_break(self):
+        """Solo con el botón (o el menú / el aviso): nunca empieza solo."""
+        if self.manual == "break":
+            return
         self.manual = "break"
         self.break_start_v = self.vclock
+        self.n_breaks += 1
         self._after_manual()
 
+    def _end_break(self):
+        """Cierra el break en curso: suma su tiempo a la sesión y alivia la racha."""
+        if self.manual != "break":
+            return
+        took = max(0.0, self.vclock - self.break_start_v)
+        self.sess_breaks += took
+        brk = self.conf["autonomo"]["break_min"] * 60
+        if took >= brk:
+            self.streak = 0.0                # break completo: racha desde cero
+        elif brk > 0:                        # break corto: descuenta lo descansado
+            self.streak *= max(0.0, 1.0 - took / brk)
+        self.manual = None
+
     def resume(self):
-        if self.manual == "break":
-            brk = self.conf["autonomo"]["break_min"] * 60
-            if self.vclock - self.break_start_v >= brk:
-                self.streak = 0.0        # break completo: racha desde cero
+        """Volver del break o de la pausa: el tiempo del proyecto sigue donde iba."""
+        self._end_break()
         self.manual = None
         self._after_manual()
+
+    def _open_session(self):
+        self.session = 0.0
+        self.session_start = dt.datetime.now().isoformat(timespec="seconds")
+        self.sess_v0 = self.vclock
+        self.sess_breaks = 0.0
+        self.n_breaks = 1 if self.manual == "break" else 0
+        if self.manual == "break":
+            self.break_start_v = self.vclock
+
+    def metrics_lines(self):
+        x = self.session_metrics()
+        nb = x["n_breaks"]
+        return (f"Sesión total {fmt_short(x['total'])} · trabajo real {fmt_short(x['real'])}",
+                f"Breaks {fmt_short(x['breaks'])} ({nb} {'break' if nb == 1 else 'breaks'})"
+                f" · ausencias {fmt_short(x['ausencias'])}")
+
+    def session_metrics(self):
+        """Las dos medidas de la sesión: total (todas las horas, sin excepción) y real
+        (lo trabajado), más lo que se fue en breaks y en ausencias o pausas."""
+        total = max(0.0, self.vclock - self.sess_v0) if self.sess_v0 is not None else 0.0
+        brk = self.sess_breaks
+        if self.manual == "break":
+            brk += max(0.0, self.vclock - self.break_start_v)
+        real = self.session
+        total = max(total, real + brk)
+        return {"total": total, "real": real, "breaks": brk, "n_breaks": self.n_breaks,
+                "ausencias": max(0.0, total - real - brk)}
 
     def chip_action(self):
         if self.manual == "break":
@@ -4225,6 +4471,12 @@ class GauxTimer:
     def on_release(self, e):
         if self._resize:
             self.resize_end()
+            return
+        pa, self._press_act = self._press_act, None
+        if pa and abs(e.x_root - pa[1]) <= 4 and abs(e.y_root - pa[2]) <= 4:
+            self._drag = None
+            self._last_btn = time.monotonic()
+            pa[0]()
             return
         if self._drag:
             self.root.update_idletasks()
@@ -4254,9 +4506,13 @@ class GauxTimer:
     def _build_menu(self):
         m = tk.Menu(self.root, tearoff=0)
         m.add_command(label="Fluidez: —", state="disabled")
+        m.add_command(label="Sesión total: —", state="disabled")
+        self._met_idx = m.index("end")
+        m.add_command(label="Breaks: —", state="disabled")
         m.add_separator()
         m.add_command(label="Pausar / reanudar", command=self.toggle_pause)
-        m.add_command(label="Tomar break", command=self.start_break)
+        m.add_command(label="Tomar break", command=self.chip_action)
+        self._brk_idx = m.index("end")
         m.add_command(label="Reiniciar sesión", command=self.reset_session)
         m.add_separator()
         self.proj_menu = tk.Menu(m, tearoff=0)
@@ -4319,6 +4575,10 @@ class GauxTimer:
             txt += f" · analizador {a:.0f} fps"
         try:
             self.menu.entryconfig(0, label=txt)
+            for i, t in zip((self._met_idx, self._met_idx + 1), self.metrics_lines()):
+                self.menu.entryconfig(i, label=t)
+            self.menu.entryconfig(self._brk_idx, label="Volver del break"
+                                  if self.manual == "break" else "Tomar break")
             pn = self.project_name()
             self.menu.entryconfig(self._proj_idx,
                                   label=f"Proyecto: {pn if len(pn) < 28 else pn[:27] + '…'}")
@@ -4430,7 +4690,7 @@ class GauxTimer:
 
     def reset_session(self):
         self._close_session()
-        self.session_start = dt.datetime.now().isoformat(timespec="seconds")
+        self._open_session()
         self.refresh_text()
 
     def quit(self):
@@ -4887,12 +5147,31 @@ class Proyectos(tk.Toplevel):
                 w.writerow([k, round(v["total"] / 3600, 2), fmt_hm(v["total"]), fmt_hm(v["hoy"]),
                             fmt_hm(v["semana"]), fmt_hm(v["mes"]), v["sesiones"],
                             v["creado"] or "", v["ultima"] or "", v["daw"]])
+        spath = os.path.join(folder, f"{APP_NAME} - Sesiones.csv")
+        with open(spath, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(["Inicio", "Fin", "Sesión total (h:mm)", "Trabajo real (h:mm)",
+                        "Breaks (h:mm)", "Cantidad de breaks", "Ausencias y pausas (h:mm)",
+                        "Proyectos"])
+            for x in reversed(app.data.get("sesiones", [])):
+                def num(v, d=0):
+                    return v if _num(v) else d
+                real = num(x.get("segundos"))
+                tot = max(num(x.get("total"), real), real)      # sesiones viejas: sin total
+                brk = num(x.get("breaks"))
+                aus = num(x.get("ausencias"), max(0, tot - real - brk))
+                pj = x.get("proyectos") if isinstance(x.get("proyectos"), dict) else {}
+                w.writerow([x.get("inicio", ""), x.get("fin", ""), fmt_hm(tot), fmt_hm(real),
+                            fmt_hm(brk), int(num(x.get("n_breaks"))), fmt_hm(aus),
+                            " · ".join(f"{k} ({fmt_hm(num(v))})" for k, v in pj.items())])
         if SYSTEM == "Darwin":
             subprocess.Popen(["open", "-R", path])
         elif SYSTEM == "Windows":
             subprocess.Popen(["explorer", "/select,", path])
-        app.notice("Proyectos exportados", f"Guardé el archivo en:\n{path}\n\n"
-                                          "Lo puedes abrir con Numbers, Excel o Google Sheets.")
+        app.notice("Proyectos exportados", f"Guardé los archivos en:\n{path}\n{spath}\n\n"
+                                          "En Sesiones verás el tiempo total de cada sesión y "
+                                          "el trabajo real, con sus breaks y ausencias.\n"
+                                          "Se abren con Numbers, Excel o Google Sheets.")
 
 
 # --------------------------------------------------------------------------
@@ -5317,8 +5596,10 @@ class Ajustes(tk.Toplevel):
         r = self.line(self.auto_box, "Avisarme si en el día paso de")
         self.max_step = self.stepper(r, int(a["max_diario_h"] or 0), 1, 0, 16,
                                      lambda v: "Nunca" if v == 0 else f"{v} h", width=8)
-        self.note(self.auto_box, "Si te alejas del DAW el tiempo que dura el descanso, la racha "
-                                 "vuelve a cero sola.", pady=(8, 0))
+        self.note(self.auto_box, "El break empieza solo cuando tocas la taza del timer y "
+                                 "termina cuando la tocas otra vez (Volver): no vuelve solo. "
+                                 "Si te alejas del DAW el tiempo del descanso, la racha vuelve "
+                                 "a cero y se anota como ausencia.", pady=(8, 0))
         # aviso de bienestar (modo normal)
         self.warn_box = tk.Frame(pg, bg=mix(WARN, T["bg"], 0.88))
         tk.Frame(self.warn_box, bg=WARN, width=3).pack(side="left", fill="y")

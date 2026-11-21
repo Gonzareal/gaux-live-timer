@@ -961,3 +961,112 @@ def test_top_live_mueve_la_ventana_con_accesibilidad(fakes):
         assert abs(x - 120) <= 4 and abs(y - 160) <= 4 and abs(w - 760) <= 4 and abs(h - 480) <= 4
     finally:
         fakes.close(path)
+
+
+# ================================================================== 10. break con el mouse de verdad
+def _mouse_ok():
+    """En Mac, mandar clics del sistema pide Accesibilidad para quien corre las pruebas."""
+    if not MAC:
+        return True
+    import ctypes
+    ax = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    ax.AXIsProcessTrusted.restype = ctypes.c_bool
+    return bool(ax.AXIsProcessTrusted())
+
+
+def mouse_click(x, y):
+    """Un clic real del sistema (el mismo que hace el mouse) en (x, y) de la pantalla."""
+    import ctypes
+    x, y = int(round(x)), int(round(y))
+    if WIN:
+        u = ctypes.windll.user32
+        u.SetCursorPos(x, y)
+        time.sleep(0.25)
+        u.mouse_event(0x0002, 0, 0, 0, 0)          # botón izquierdo abajo
+        time.sleep(0.06)
+        u.mouse_event(0x0004, 0, 0, 0, 0)          # arriba
+    else:
+        cg = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+
+        class CGPoint(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_double), ("y", ctypes.c_double)]
+        cg.CGEventCreateMouseEvent.restype = ctypes.c_void_p
+        cg.CGEventCreateMouseEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint32, CGPoint,
+                                               ctypes.c_uint32]
+        cg.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        cg.CFRelease.argtypes = [ctypes.c_void_p]
+        for kind, pause in ((5, 0.25), (1, 0.06), (2, 0.0)):    # mover, abajo, arriba
+            ev = cg.CGEventCreateMouseEvent(None, kind, CGPoint(x, y), 0)
+            cg.CGEventPost(0, ev)
+            cg.CFRelease(ev)
+            time.sleep(pause)
+    time.sleep(0.5)
+
+
+def _boton_break(since, vista):
+    """Dónde dibujó la app el botón de break (lo anota en su registro al armar la vista)."""
+    import re
+    pat = re.compile(r"vista: (\S+) (\d+)x(\d+) break=(-?\d+),(-?\d+)")
+    found = None
+    for m in pat.finditer(new_log(since)):
+        if m.group(1) == vista:
+            found = m
+    assert found, f"la app no anotó la vista {vista}: {new_log(since)[-1500:]}"
+    W, H, cx, cy = (int(found.group(i)) for i in (2, 3, 4, 5))
+    assert 0 < cx < W and 0 < cy < H, "el botón queda dentro del timer"
+    return cx, cy
+
+
+VISTAS_BREAK = [("completa", "horizontal"), ("compacta", "horizontal"), ("mini", "horizontal"),
+                ("completa", "vertical"), ("compacta", "vertical"), ("mini", "vertical")]
+
+
+@pytest.mark.parametrize("vista,orient", VISTAS_BREAK, ids=[f"{v}-{o}" for v, o in VISTAS_BREAK])
+def test_break_con_el_mouse(fakes, vista, orient):
+    """Con el DAW al frente: clic real en la taza → empieza el break (el tiempo del proyecto
+    se detiene), el break termina y NO vuelve solo, clic en la taza otra vez → vuelve. La
+    sesión guardada trae las dos medidas: total y trabajo real, con su break."""
+    if not _mouse_ok():
+        pytest.skip("esta Mac de pruebas no deja mandar clics del sistema (Accesibilidad)")
+    key = vista + ("_v" if orient == "vertical" else "")
+    X, Y = 420, 120
+    largo = vista == "completa" and orient == "horizontal"     # el ciclo entero, una vez
+    write_conf(tema="gaux", vista=vista, orientacion=orient, modo="autonomo",
+               pos={key: [X, Y]}, escala={key: 1.0}, analizador={"activo": False},
+               autonomo={"trabajo_min": 50, "break_min": 1, "max_diario_h": 0},
+               animaciones=True)
+    since = log_size()
+    a = App().start()
+    name, exe, title, _, _ = DAWS[0]
+    n0 = len(data().get("sesiones", []))
+    p = fakes.open(name, exe, title)
+    try:
+        time.sleep(63)                                   # trabajo (la sesión dura más de 1 min)
+        cx, cy = _boton_break(since, key)
+        mouse_click(X + cx, Y + cy)                      # ☕ tomar el break
+        t_brk = time.monotonic()
+        time.sleep(3)
+        shot(f"break-{key}-en-curso")
+        time.sleep(72 if largo else 5)                   # el break de 1 min termina (largo)
+        if largo:
+            shot(f"break-{key}-terminado-espera-volver")
+        mouse_click(X + cx, Y + cy)                      # volver del break
+        brk = time.monotonic() - t_brk
+        time.sleep(6)
+        shot(f"break-{key}-de-vuelta")
+    finally:
+        fakes.close(p)
+    esperar_guardado_al_cerrar(time.time())
+    assert wait(lambda: len(data().get("sesiones", [])) == n0 + 1, 10), "no se guardó la sesión"
+    s = data()["sesiones"][-1]
+    a.quit()
+    print(f"{key}: {s}")
+    assert s.get("n_breaks") == 1, f"el clic en la taza no inició el break: {s}"
+    assert s["breaks"] == pytest.approx(brk, abs=4), f"break medido {s['breaks']} s, real {brk:.0f} s"
+    # trabajo real: 63 s antes + 6 s después (si hubiera vuelto solo, sumaría ~15 s más)
+    assert 62 <= s["segundos"] <= 76, f"trabajo real {s['segundos']} s"
+    assert s["total"] >= s["segundos"] + s["breaks"] - 1
+    assert s["total"] == pytest.approx(s["segundos"] + s["breaks"] + s["ausencias"], abs=2)
+    log = new_log(since)
+    assert "Traceback" not in log, log[-2000:]
